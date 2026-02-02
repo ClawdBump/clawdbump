@@ -20,15 +20,7 @@ const nextConfig = {
     unoptimized: true,
   },
 
-  async redirects() {
-    return [
-      {
-        source: '/.well-known/farcaster.json',
-        destination: 'https://api.farcaster.xyz/miniapps/hosted-manifest/019b6904-aa9c-a5cf-d965-ccddf734f08e',
-        permanent: false,
-      },
-    ]
-  },
+
 
   webpack: (config, { isServer }) => {
     if (!isServer) {
