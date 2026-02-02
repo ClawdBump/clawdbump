@@ -1,0 +1,36 @@
+{
+  "frame": {
+    "name": "FarBump",
+    "version": "1",
+    "iconUrl": "https://farbump.vercel.app/farbump-logo.png",
+    "homeUrl": "https://farbump.vercel.app",
+    "imageUrl": "https://farbump.vercel.app/farbump-logo.png",
+    "buttonTitle": "Bump!",
+    "splashImageUrl": "https://farbump.vercel.app/farbump-logo.png",
+    "splashBackgroundColor": "#000000",
+    "webhookUrl": "https://farbump.vercel.app/api/webhook",
+    "subtitle": "Built to trend",
+    "description": "Automate your token's momentum on Farcaster. Precision bumping for the Base network.",
+    "screenshotUrls": [
+      "https://farbump.vercel.app/farbump-logo.png"
+    ],
+    "primaryCategory": "utility",
+    "tags": [
+      "token",
+      "utility",
+      "clanker",
+      "launch",
+      "trade"
+    ],
+    "heroImageUrl": "https://farbump.vercel.app/farbump-logo.png",
+    "tagline": "Built to trend",
+    "ogTitle": "FarBump - Built to trend",
+    "ogDescription": "FarBump - Built to trend",
+    "ogImageUrl": "https://farbump.vercel.app/farbump-logo.png"
+  },
+  "accountAssociation": {
+    "header": "eyJmaWQiOjE5NzUyNDcsInR5cGUiOiJhdXRoIiwia2V5IjoiMHgwNTI0NzdCZTNiNGE3OWNkZmIzNDM5Qjc0NkI5NzQ0MDgyMUYzMTEyIn0",
+    "payload": "eyJkb21haW4iOiJmYXJidW1wLnZlcmNlbC5hcHAifQ",
+    "signature": "r9YeNtStbpE9HmQ8TNu1v98nuBD0B1/s3NkaSvUHrPhS/gTK+FBNQAZC6QkphYIBMcQlsHjQRl5762TzTUkX9xs="
+  }
+}
