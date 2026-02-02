@@ -22,7 +22,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { userAddress, distributions, txHash } = body as {
       userAddress: string
-      distributions: Array<{ botWalletAddress: string; amountWei: string; wethAmountWei?: string }>
+      distributions: Array<{ 
+        botWalletAddress: string
+        amountWei: string
+        nativeEthAmountWei?: string // Native ETH amount (if distributed as Native ETH)
+        wethAmountWei?: string // WETH amount (if distributed as WETH)
+      }>
       txHash: string
     }
 
@@ -43,49 +48,58 @@ export async function POST(request: NextRequest) {
     const supabase = createSupabaseServiceClient()
     const normalizedUserAddress = userAddress.toLowerCase()
 
-    // Calculate total WETH distributed (sum of all distributions)
+    // Calculate total distributed (sum of all distributions)
     // This will be deducted from main wallet credit (user_credits.balance_wei)
     let totalDistributedWei = BigInt(0)
     
     // Upsert distribution records for each bot wallet
     // IMPORTANT: Only 1 row per bot_wallet_address (unique constraint)
-    // If record exists, add to existing weth_balance_wei
-    // If record doesn't exist, create new record with weth_balance_wei
+    // If record exists, add to existing balance (native_eth_balance_wei or weth_balance_wei)
+    // If record doesn't exist, create new record
     // 
     // CREDIT SYSTEM (1:1 Value):
-    // - Only weth_balance_wei is used for credit tracking
-    // - When distributing: Add to bot_wallet_credits.weth_balance_wei AND subtract from user_credits.balance_wei
-    // - Total Credit = user_credits.balance_wei (main wallet) + SUM(bot_wallet_credits.weth_balance_wei) (bot wallets)
-    // - Credit value is 1:1 (WETH = ETH in terms of credit calculation)
+    // - Bot wallets can hold Native ETH AND/OR WETH
+    // - native_eth_balance_wei: Native ETH balance (Base chain ETH)
+    // - weth_balance_wei: WETH balance (Wrapped ETH ERC20)
+    // - Total bot credit = native_eth_balance_wei + weth_balance_wei
+    // - When distributing: Add to bot_wallet_credits AND subtract from user_credits.balance_wei
+    // - Total Credit = user_credits.balance_wei + SUM(bot native_eth + weth)
     // 
-    // WHY WETH?
-    // - Bot wallets hold WETH instead of Native ETH for gasless transactions
-    // - WETH can be directly used in Uniswap v4 swaps without unwrapping
-    // - Paymaster Coinbase allows ERC20 (WETH) transfers that were rejected for Native ETH
+    // FLEXIBILITY:
+    // - Bot can receive Native ETH (faster, no conversion)
+    // - Bot can receive WETH (for ERC20 swaps)
+    // - Bot can use either for swaps (0x API supports both)
     
     for (const dist of distributions) {
       const botWalletAddress = dist.botWalletAddress.toLowerCase()
-      const wethAmountWei = dist.wethAmountWei || dist.amountWei
-      totalDistributedWei += BigInt(wethAmountWei)
+      const nativeEthAmountWei = dist.nativeEthAmountWei || "0"
+      const wethAmountWei = dist.wethAmountWei || "0"
+      const totalAmountWei = BigInt(nativeEthAmountWei) + BigInt(wethAmountWei)
+      
+      totalDistributedWei += totalAmountWei
       
       // Check if record exists
       const { data: existingRecord } = await supabase
         .from("bot_wallet_credits")
-        .select("weth_balance_wei")
+        .select("native_eth_balance_wei, weth_balance_wei")
         .eq("user_address", normalizedUserAddress)
         .eq("bot_wallet_address", botWalletAddress)
         .single()
       
       if (existingRecord) {
-        // Update existing record: add to existing weth_balance_wei
-        const currentBalance = BigInt(existingRecord.weth_balance_wei || "0")
-        const newBalance = currentBalance + BigInt(wethAmountWei)
+        // Update existing record: add to existing balances
+        const currentNativeEth = BigInt(existingRecord.native_eth_balance_wei || "0")
+        const currentWeth = BigInt(existingRecord.weth_balance_wei || "0")
+        const newNativeEth = currentNativeEth + BigInt(nativeEthAmountWei)
+        const newWeth = currentWeth + BigInt(wethAmountWei)
         
         const { error: updateError } = await supabase
           .from("bot_wallet_credits")
           .update({
-            weth_balance_wei: newBalance.toString(),
+            native_eth_balance_wei: newNativeEth.toString(),
+            weth_balance_wei: newWeth.toString(),
             tx_hash: txHash, // Update tx_hash to most recent
+            updated_at: new Date().toISOString(),
           })
           .eq("user_address", normalizedUserAddress)
           .eq("bot_wallet_address", botWalletAddress)
@@ -104,8 +118,11 @@ export async function POST(request: NextRequest) {
           .insert({
             user_address: normalizedUserAddress,
             bot_wallet_address: botWalletAddress,
+            native_eth_balance_wei: nativeEthAmountWei,
             weth_balance_wei: wethAmountWei,
             tx_hash: txHash,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           })
         
         if (insertError) {
