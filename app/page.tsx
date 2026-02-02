@@ -10,7 +10,7 @@ import { ActionButton } from "@/components/action-button"
 import { BotLiveActivity } from "@/components/bot-live-activity"
 import { PriceChart } from "@/components/price-chart"
 import { ManageBot } from "@/components/manage-bot"
-import { User, Zap } from "lucide-react"
+import { User } from "lucide-react"
 import Image from "next/image"
 import { usePrivy, useWallets } from "@privy-io/react-auth"
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets"
@@ -643,9 +643,9 @@ export default function BumpBotDashboard() {
         <header className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="relative h-16 w-16 shrink-0 sm:h-20 sm:w-20 flex items-center justify-center rounded-lg bg-primary/10 border border-primary/20">
-                <Zap className="h-8 w-8 sm:h-10 sm:w-10 text-primary" />
-              </div>
+<div className="relative h-16 w-16 shrink-0 sm:h-20 sm:w-20 flex items-center justify-center rounded-lg overflow-hidden">
+<Image src="/clawdbump-logo.png" alt="ClawdBump Logo" fill className="object-contain" />
+</div>
               <div>
                 <h1 className="font-mono text-base font-semibold tracking-tight text-foreground sm:text-lg">ClawdBump</h1>
                 <p className="text-xs text-muted-foreground">Built to Trend</p>
