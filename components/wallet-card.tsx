@@ -5,6 +5,9 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Copy, Check, Shield, RefreshCw } from "lucide-react"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
+import { usePublicClient } from "wagmi"
+import { formatEther } from "viem"
+import { toast } from "sonner"
 
 interface WalletCardProps {
   fuelBalance?: number
@@ -16,6 +19,7 @@ interface WalletCardProps {
 export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmartAccountActive = false }: WalletCardProps) {
   const [copied, setCopied] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const publicClient = usePublicClient()
   
   // Privy Smart Wallet address
   const smartWalletAddress = walletAddress || "0x000...000"
@@ -39,10 +43,93 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
     setTimeout(() => setCopied(false), 2000)
   }
 
+  /**
+   * Fetch balance from blockchain (on-chain) and sync with database
+   * This ensures credit balance reflects actual on-chain balance (Native ETH + WETH)
+   */
   const handleRefreshBalance = async () => {
+    if (!smartWalletAddress || smartWalletAddress === "0x000...000" || !isSmartAccountActive) {
+      toast.error("Wallet not connected")
+      return
+    }
+    
     setIsRefreshing(true)
     try {
+      console.log("🔄 Fetching balance from blockchain...")
+      
+      // WETH Contract on Base
+      const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
+      const WETH_ABI = [
+        {
+          inputs: [{ name: "account", type: "address" }],
+          name: "balanceOf",
+          outputs: [{ name: "", type: "uint256" }],
+          stateMutability: "view",
+          type: "function",
+        },
+      ] as const
+      
+      // Fetch Native ETH balance
+      const nativeEthBalance = await publicClient.getBalance({
+        address: smartWalletAddress as `0x${string}`,
+      })
+      
+      // Fetch WETH balance
+      let wethBalance = BigInt(0)
+      try {
+        wethBalance = await publicClient.readContract({
+          address: WETH_ADDRESS,
+          abi: WETH_ABI,
+          functionName: "balanceOf",
+          args: [smartWalletAddress as `0x${string}`],
+        }) as bigint
+      } catch (error) {
+        console.warn("Failed to fetch WETH balance:", error)
+      }
+      
+      // Total on-chain balance
+      const totalOnChainBalanceWei = nativeEthBalance + wethBalance
+      const totalEth = formatEther(totalOnChainBalanceWei)
+      
+      console.log(`✅ On-chain balance: ${totalEth} ETH (${formatEther(nativeEthBalance)} Native + ${formatEther(wethBalance)} WETH)`)
+      
+      // Sync with database if needed
+      try {
+        const syncResponse = await fetch("/api/credit/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userAddress: smartWalletAddress,
+            syncOnly: true, // Only sync, don't add
+          }),
+        })
+        
+        const syncData = await syncResponse.json()
+        
+        if (syncResponse.ok && syncData.success) {
+          console.log("✅ Database synced with on-chain balance")
+          toast.success("Balance updated from blockchain", {
+            description: `${totalEth} ETH (${formatEther(nativeEthBalance)} Native + ${formatEther(wethBalance)} WETH)`,
+          })
+        } else {
+          console.warn("Failed to sync database:", syncData.error)
+          toast.warning("Fetched from blockchain but failed to sync database", {
+            description: syncData.error || "Unknown error",
+          })
+        }
+      } catch (syncError: any) {
+        console.error("Failed to sync with database:", syncError)
+        toast.warning("Fetched from blockchain but failed to sync database")
+      }
+      
+      // Refetch from database to get updated balance
       await refetchCredit()
+      
+    } catch (error: any) {
+      console.error("❌ Failed to refresh balance:", error)
+      toast.error("Failed to fetch balance from blockchain", {
+        description: error.message || "Unknown error",
+      })
     } finally {
       setTimeout(() => setIsRefreshing(false), 500)
     }

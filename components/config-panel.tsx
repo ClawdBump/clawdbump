@@ -4,8 +4,12 @@ import { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Slider } from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
-import { Clock, Fuel, AlertCircle, DollarSign } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog"
+import { Clock, Fuel, AlertCircle, DollarSign, Wallet, Copy, Check } from "lucide-react"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
+import { QRCodeSVG } from "qrcode.react"
+import { toast } from "sonner"
 
 interface ConfigPanelProps {
   fuelBalance?: number
@@ -37,6 +41,19 @@ export function ConfigPanel({
   )
   
   const displayCredit = creditData?.balanceUsd ?? credits
+  
+  // QR Code dialog state
+  const [isQRDialogOpen, setIsQRDialogOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  
+  const handleCopyAddress = () => {
+    if (smartWalletAddress && smartWalletAddress !== "0x000...000") {
+      navigator.clipboard.writeText(smartWalletAddress)
+      setCopied(true)
+      toast.success("Address copied to clipboard!")
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
   
   const [internalInterval, setInternalInterval] = useState(60)
   const currentInterval = intervalSeconds !== undefined ? intervalSeconds : internalInterval
@@ -112,6 +129,78 @@ export function ConfigPanel({
                 Deposit ETH or WETH to your Smart Wallet to add credits
               </p>
             </div>
+            
+            {/* Deposit Button */}
+            <Dialog open={isQRDialogOpen} onOpenChange={setIsQRDialogOpen}>
+              <DialogTrigger asChild>
+                <Button 
+                  className="w-full" 
+                  size="sm"
+                  disabled={!smartWalletAddress || smartWalletAddress === "0x000...000"}
+                >
+                  <Wallet className="h-4 w-4 mr-2" />
+                  Deposit
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Deposit to Smart Wallet</DialogTitle>
+                  <DialogDescription>
+                    Scan QR code or copy address to deposit ETH/WETH to your Privy Smart Account
+                  </DialogDescription>
+                </DialogHeader>
+                
+                <div className="space-y-4">
+                  {/* QR Code */}
+                  <div className="flex justify-center p-4 bg-white rounded-lg">
+                    {smartWalletAddress && smartWalletAddress !== "0x000...000" ? (
+                      <QRCodeSVG 
+                        value={smartWalletAddress}
+                        size={256}
+                        level="H"
+                        includeMargin={true}
+                      />
+                    ) : (
+                      <div className="w-64 h-64 bg-muted flex items-center justify-center">
+                        <p className="text-muted-foreground text-sm">No wallet address</p>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Address with Copy Button */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Smart Wallet Address</p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 p-3 bg-secondary rounded-lg border border-border">
+                        <p className="font-mono text-xs break-all text-foreground">
+                          {smartWalletAddress || "0x000...000"}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCopyAddress}
+                        className="shrink-0"
+                      >
+                        {copied ? (
+                          <Check className="h-4 w-4 text-primary" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  {/* Network Info */}
+                  <div className="rounded-lg bg-primary/10 border border-primary/20 p-3">
+                    <p className="text-xs font-medium text-primary mb-1">Network: Base Mainnet</p>
+                    <p className="text-[10px] text-primary/80 leading-tight">
+                      Only deposit ETH or WETH on Base Network. Deposits from other networks will be lost.
+                    </p>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
 
           {displayCredit === 0 && (
