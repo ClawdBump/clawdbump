@@ -339,6 +339,47 @@ export default function BumpBotDashboard() {
     syncTelegramToDatabase()
   }, [authenticated, privySmartWalletAddress, telegramId, user?.id])
 
+  // Sync user to user_credits table (for all users, not just Telegram)
+  // This ensures every user has a record in user_credits for credit balance tracking
+  const hasSyncedUserCreditsRef = useRef(false)
+
+  useEffect(() => {
+    const syncUserCredits = async () => {
+      if (hasSyncedUserCreditsRef.current) return
+      if (!authenticated || !privySmartWalletAddress) return
+      
+      // Skip if already synced via Telegram upsert (Telegram users already have user_credits created)
+      if (telegramId && hasSyncedTelegramRef.current) {
+        hasSyncedUserCreditsRef.current = true
+        return
+      }
+
+      try {
+        console.log("[v0] Ensuring user_credits record exists for:", privySmartWalletAddress)
+
+        const response = await fetch("/api/user/ensure-credits", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userAddress: privySmartWalletAddress.toLowerCase(),
+          }),
+        })
+
+        if (response.ok) {
+          console.log("[v0] user_credits record ensured successfully")
+          hasSyncedUserCreditsRef.current = true
+        } else {
+          const errorData = await response.json().catch(() => ({}))
+          console.error("[v0] Failed to ensure user_credits:", errorData)
+        }
+      } catch (error) {
+        console.error("[v0] Error ensuring user_credits:", error)
+      }
+    }
+
+    syncUserCredits()
+  }, [authenticated, privySmartWalletAddress, telegramId])
+
   const isWalletReady = !!privySmartWalletAddress
   const isConnected = authenticated && isWalletReady
   const isInitializing = authenticated && !isWalletReady

@@ -207,6 +207,36 @@ export async function POST(request: NextRequest) {
       last_login_at: data?.last_login_at,
     })
 
+    // =============================================
+    // 5. Also create/update user_credits record
+    // =============================================
+    // This ensures Telegram users are treated like regular users
+    // and can use all features (credit balance, bot sessions, etc.)
+    console.log("🔍 [UPSERT-WALLET] Creating/updating user_credits record...")
+    
+    const { data: creditData, error: creditError } = await supabase
+      .from("user_credits")
+      .upsert(
+        {
+          user_address: normalizedWalletAddress,
+          balance_wei: "0", // Initial balance is 0, user will deposit ETH/WETH
+          last_updated: new Date().toISOString(),
+        },
+        {
+          onConflict: "user_address",
+          ignoreDuplicates: true, // Don't update if already exists (preserve balance)
+        }
+      )
+      .select()
+      .single()
+
+    if (creditError && creditError.code !== "PGRST116" && creditError.code !== "23505") {
+      // Log but don't fail - user_credits is secondary
+      console.warn("⚠️ [UPSERT-WALLET] Warning: Could not upsert user_credits:", creditError.message)
+    } else {
+      console.log("✅ [UPSERT-WALLET] user_credits record ensured for:", normalizedWalletAddress)
+    }
+
     return NextResponse.json({
       success: true,
       message: "Wallet address upserted successfully",
