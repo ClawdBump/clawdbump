@@ -20,15 +20,16 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- 1. TELEGRAM USER MAPPINGS
 -- =============================================
 -- Stores Telegram user data and wallet associations
--- Used for Telegram Mini App authentication
+-- Used for Telegram authentication via Privy
+-- CRITICAL: This table links Telegram users to their Privy Smart Wallets
 CREATE TABLE IF NOT EXISTS telegram_user_mappings (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  telegram_id TEXT NOT NULL UNIQUE,
-  telegram_username TEXT,
-  first_name TEXT,
-  last_name TEXT,
-  photo_url TEXT,
-  wallet_address TEXT, -- Privy Smart Wallet address
+  telegram_id TEXT NOT NULL UNIQUE, -- Telegram user ID (from Privy linkedAccounts)
+  telegram_username TEXT, -- @username (optional)
+  first_name TEXT, -- Telegram first name
+  last_name TEXT, -- Telegram last name
+  photo_url TEXT, -- Profile photo URL
+  wallet_address TEXT, -- Privy Smart Wallet address (lowercase)
   privy_user_id TEXT, -- Privy DID (did:privy:xxx)
   is_active BOOLEAN DEFAULT true,
   last_login_at TIMESTAMPTZ DEFAULT NOW(),
@@ -36,7 +37,7 @@ CREATE TABLE IF NOT EXISTS telegram_user_mappings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for fast lookup by telegram_id
+-- Index for fast lookup by telegram_id (primary lookup for ClawdBot)
 CREATE INDEX IF NOT EXISTS idx_telegram_user_mappings_telegram_id 
 ON telegram_user_mappings(telegram_id);
 
@@ -44,11 +45,16 @@ ON telegram_user_mappings(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_user_mappings_wallet_address 
 ON telegram_user_mappings(wallet_address);
 
+-- Index for privy_user_id lookup
+CREATE INDEX IF NOT EXISTS idx_telegram_user_mappings_privy_user_id 
+ON telegram_user_mappings(privy_user_id);
+
 -- =============================================
 -- 2. USER CREDITS
 -- =============================================
 -- Stores user credit balances (ETH/WETH deposits to Smart Account)
 -- Credits are used to fund bot wallets for bumping
+-- balance_wei represents the credit in main wallet (before distribution)
 CREATE TABLE IF NOT EXISTS user_credits (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_address TEXT NOT NULL UNIQUE, -- Privy Smart Wallet address (lowercase)
@@ -88,6 +94,7 @@ ON wallets_data(smart_account_address);
 -- =============================================
 -- Tracks WETH credits distributed to each bot wallet
 -- Only 1 row per bot_wallet_address per user (UPSERT pattern)
+-- Credit value is 1:1 (WETH = ETH in terms of credit calculation)
 CREATE TABLE IF NOT EXISTS bot_wallet_credits (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_address TEXT NOT NULL, -- Main user's Smart Wallet address
@@ -114,12 +121,13 @@ ON bot_wallet_credits(bot_wallet_address);
 -- =============================================
 -- Tracks active bumping sessions
 -- Only 1 active session per user at a time
+-- Bot runs continuously until user manually stops it
 CREATE TABLE IF NOT EXISTS bot_sessions (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   user_address TEXT NOT NULL, -- Main user's Smart Wallet address
   token_address TEXT NOT NULL, -- Target token to bump
-  buy_amount_per_bump_wei TEXT NOT NULL, -- Amount in wei per bump
-  amount_usd TEXT, -- Amount in USD per bump (stored for reference)
+  buy_amount_per_bump_wei TEXT NOT NULL, -- Amount in wei per bump (calculated from USD)
+  amount_usd TEXT, -- Amount in USD per bump (user input, stored for reference)
   interval_seconds INTEGER DEFAULT 60, -- Interval between bumps (2-600 seconds)
   total_sessions INTEGER DEFAULT 0, -- Deprecated: runs until stopped
   current_session INTEGER DEFAULT 0, -- Deprecated: runs until stopped
@@ -139,7 +147,7 @@ ON bot_sessions(user_address);
 CREATE INDEX IF NOT EXISTS idx_bot_sessions_status 
 ON bot_sessions(status);
 
--- Composite index for user + status queries
+-- Composite index for user + status queries (most common query pattern)
 CREATE INDEX IF NOT EXISTS idx_bot_sessions_user_status 
 ON bot_sessions(user_address, status);
 
@@ -147,12 +155,13 @@ ON bot_sessions(user_address, status);
 -- 6. BOT LOGS
 -- =============================================
 -- Activity logs for debugging and monitoring
+-- Stores all swap attempts, successes, and failures
 CREATE TABLE IF NOT EXISTS bot_logs (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   session_id UUID REFERENCES bot_sessions(id) ON DELETE CASCADE,
   user_address TEXT NOT NULL,
   bot_wallet_address TEXT,
-  action TEXT NOT NULL, -- 'swap_started', 'swap_completed', 'swap_failed', etc.
+  action TEXT NOT NULL, -- 'swap_started', 'swap_completed', 'swap_failed', 'session_started', etc.
   status TEXT NOT NULL, -- 'success', 'error', 'pending'
   message TEXT,
   tx_hash TEXT,
@@ -180,7 +189,7 @@ ON bot_logs(created_at DESC);
 -- =============================================
 -- Enable RLS on all tables for security
 -- Note: API uses service_role key which bypasses RLS
--- These policies are for direct client access if needed
+-- These policies allow the service_role to perform all operations
 
 -- Enable RLS
 ALTER TABLE telegram_user_mappings ENABLE ROW LEVEL SECURITY;
@@ -190,9 +199,15 @@ ALTER TABLE bot_wallet_credits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_logs ENABLE ROW LEVEL SECURITY;
 
--- Service role bypass policies (for API access)
--- These allow the service_role to perform all operations
+-- Drop existing policies if they exist (to avoid conflicts)
+DROP POLICY IF EXISTS "Service role full access on telegram_user_mappings" ON telegram_user_mappings;
+DROP POLICY IF EXISTS "Service role full access on user_credits" ON user_credits;
+DROP POLICY IF EXISTS "Service role full access on wallets_data" ON wallets_data;
+DROP POLICY IF EXISTS "Service role full access on bot_wallet_credits" ON bot_wallet_credits;
+DROP POLICY IF EXISTS "Service role full access on bot_sessions" ON bot_sessions;
+DROP POLICY IF EXISTS "Service role full access on bot_logs" ON bot_logs;
 
+-- Create policies for service_role access
 CREATE POLICY "Service role full access on telegram_user_mappings" 
 ON telegram_user_mappings FOR ALL 
 USING (true) 
@@ -277,12 +292,15 @@ AND table_name IN (
 );
 
 -- =============================================
--- SAMPLE DATA (Optional - for testing)
+-- MIGRATION SCRIPT (if tables already exist)
 -- =============================================
--- Uncomment and run these to insert test data
+-- Run these ONLY if you have existing tables and need to add missing columns
 
--- INSERT INTO user_credits (user_address, balance_wei)
--- VALUES ('0x1234567890abcdef1234567890abcdef12345678', '1000000000000000000');
+-- Add amount_usd column to bot_sessions if not exists
+-- ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS amount_usd TEXT;
+
+-- Add interval_seconds column to bot_sessions if not exists  
+-- ALTER TABLE bot_sessions ADD COLUMN IF NOT EXISTS interval_seconds INTEGER DEFAULT 60;
 
 -- =============================================
 -- END OF SCHEMA
