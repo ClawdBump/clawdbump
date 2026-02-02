@@ -15,8 +15,7 @@ interface CreditBalance {
  * Fetches user credit balance and converts to USD
  * Uses real-time ETH price from CoinGecko API
  * 
- * IMPORTANT: This is NOT the $BUMP token balance!
- * - Credit Balance = Total ETH value from:
+ * Credit Balance = Total ETH value from:
  *   1. Main Smart Wallet: Actual ETH + WETH balance (on-chain, real-time)
  *   2. Bot Smart Wallets: WETH balance from database (weth_balance_wei)
  * 
@@ -32,13 +31,10 @@ interface CreditBalance {
  * - USD value = Total ETH credit × Current ETH price
  * 
  * Why this approach?
- * 1. When user converts $BUMP to credit → ETH/WETH added to main wallet
+ * 1. When user deposits ETH/WETH to Smart Account → Credits added
  * 2. When distributing to bot wallets → ETH/WETH moves from main wallet to bot wallets
  * 3. Main wallet balance decreases automatically (on-chain)
  * 4. No need to manually track in database for display
- * 
- * This hook is completely independent from withdraw operations.
- * Withdraw uses useBumpBalance() which reads $BUMP token balance from blockchain.
  */
 export function useCreditBalance(userAddress: string | null, options?: { enabled?: boolean }) {
   // CRITICAL: Initialize Supabase client inside hook (not at module level)
@@ -76,7 +72,6 @@ export function useCreditBalance(userAddress: string | null, options?: { enabled
             
             if (!sessionStorage.getItem("credit_406_warned")) {
               console.warn("⚠️ Credit balance fetch failed (RLS policy issue). Disabling auto-refetch.")
-              console.warn("💡 This does NOT affect withdraw - withdraw uses $BUMP token balance from blockchain.")
               console.warn("💡 Please update RLS policy in Supabase.")
               sessionStorage.setItem("credit_406_warned", "true")
             }

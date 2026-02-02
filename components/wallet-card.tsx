@@ -4,33 +4,23 @@ import { useState } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Copy, Check, Shield, RefreshCw } from "lucide-react"
-import { useBumpBalance } from "@/hooks/use-bump-balance"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
 
 interface WalletCardProps {
   fuelBalance?: number
-  credits?: number // Deprecated: kept for backward compatibility, but credit is now fetched from database
+  credits?: number
   walletAddress?: string | null
   isSmartAccountActive?: boolean
-  bumpBalance?: string // Pass formatted balance to ConfigPanel
 }
 
-export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmartAccountActive = false, bumpBalance }: WalletCardProps) {
+export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmartAccountActive = false }: WalletCardProps) {
   const [copied, setCopied] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   
-  // Privy Smart Wallet address (PRIMARY ADDRESS - used for all $BUMP balance checks and transactions)
-  // CRITICAL: This is the Smart Wallet address, NOT the Embedded Wallet (signer) address
+  // Privy Smart Wallet address
   const smartWalletAddress = walletAddress || "0x000...000"
 
-  // Fetch $BUMP token balance from Smart Wallet address
-  const { formattedBalance, isLoading: isLoadingBalance, refetch: refetchBalance } = useBumpBalance({
-    address: smartWalletAddress !== "0x000...000" ? smartWalletAddress : null,
-    enabled: isSmartAccountActive && smartWalletAddress !== "0x000...000",
-  })
-
-  // Fetch credit balance from database (ETH value from converting $BUMP to Credit)
-  // IMPORTANT: This only shows credit from valid convert transactions, not from direct ETH transfers
+  // Fetch credit balance from database
   const { 
     data: creditData, 
     isLoading: isLoadingCredit,
@@ -40,17 +30,8 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
     { enabled: isSmartAccountActive && smartWalletAddress !== "0x000...000" }
   )
 
-  // Use credit from database if available, otherwise fallback to prop (for backward compatibility)
+  // Use credit from database if available, otherwise fallback to prop
   const displayCredit = creditData?.balanceUsd ?? credits
-  
-  // Debug: Log credit data to console
-  console.log("💰 WalletCard Credit Debug:", {
-    balanceWei: creditData?.balanceWei,
-    balanceEth: creditData?.balanceEth,
-    balanceUsd: creditData?.balanceUsd,
-    displayCredit,
-    isLoadingCredit,
-  })
 
   const handleCopy = () => {
     navigator.clipboard.writeText(smartWalletAddress)
@@ -61,15 +42,13 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
   const handleRefreshBalance = async () => {
     setIsRefreshing(true)
     try {
-      await Promise.all([refetchBalance(), refetchCredit()])
+      await refetchCredit()
     } finally {
-      // Keep spinner visible for at least 500ms for better UX
       setTimeout(() => setIsRefreshing(false), 500)
     }
   }
   
-  // Show spinner when loading OR refreshing
-  const showSpinner = isLoadingBalance || isLoadingCredit || isRefreshing
+  const showSpinner = isLoadingCredit || isRefreshing
 
   return (
     <Card className="border border-border bg-card p-4">
@@ -98,40 +77,12 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
         </Button>
       </div>
 
-      <div className="mt-4 space-y-3">
-        <div className="rounded-lg bg-secondary border border-border p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex-1">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Token Balance ($BUMP)</p>
-              <p className="font-mono text-sm font-semibold text-primary">
-                {isLoadingBalance ? (
-                  <span className="text-muted-foreground">Loading...</span>
-                ) : (
-                  `${formattedBalance} $BUMP`
-                )}
-              </p>
-            </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleRefreshBalance}
-              disabled={showSpinner || !isSmartAccountActive}
-              className="h-6 w-6 p-0 hover:bg-muted/50 shrink-0 disabled:opacity-50"
-              title="Refresh balance"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${showSpinner ? "animate-spin" : ""}`} />
-            </Button>
-          </div>
-          <p className="text-[9px] text-muted-foreground mt-2">
-            Balance from Smart Wallet
-          </p>
-        </div>
-
+      <div className="mt-4">
         <div className="rounded-lg bg-secondary border border-border p-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex-1">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Credits</p>
-              <p className="font-mono text-sm font-semibold text-foreground">
+              <p className="font-mono text-sm font-semibold text-primary">
                 {isLoadingCredit ? (
                   <span className="text-muted-foreground">Loading...</span>
                 ) : (
@@ -151,7 +102,7 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
             </Button>
           </div>
           <p className="text-[9px] text-muted-foreground mt-2">
-            Credit from Convert $BUMP transactions only
+            Deposit ETH or WETH to your Smart Wallet to add credits
           </p>
         </div>
       </div>
