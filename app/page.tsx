@@ -342,7 +342,7 @@ export default function BumpBotDashboard() {
     }
     
     if (!hasCredit) {
-      toast.error("No credit detected. Please convert $BUMP to credit first.")
+      toast.error("No credit detected. Please deposit ETH or WETH to your Smart Wallet.")
       return
     }
     
@@ -505,7 +505,7 @@ export default function BumpBotDashboard() {
           }
           
           if (actualMainWalletCreditWei <= BigInt(0)) {
-            throw new Error("No credit available in main wallet. Please convert $BUMP to Credit first.")
+            throw new Error("No credit available in main wallet. Please deposit ETH or WETH first.")
           }
           
           await distributeCredits({

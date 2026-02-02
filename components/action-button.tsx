@@ -42,7 +42,7 @@ export function ActionButton({
   
   // Determine button text based on state:
   // - If active: Always show 'Stop Bumping' (primary action)
-  // - If credit 0: 'No fuel detected'
+  // - If credit 0: 'No Credits (ETH) Detected'
   // - If credit > 0 but bot wallets not created: 'Generate Bot Wallet'
   // - If credit > 0 and bot wallets exist: 'Start Bumping'
   const getButtonText = () => {
@@ -50,7 +50,7 @@ export function ActionButton({
       return "Stop Bumping"
     }
     if (!hasCredit) {
-      return "No Fuel Detected"
+      return "No Credits (ETH) Detected"
     }
     if (!hasBotWallets) {
       return "Generate Bot Wallet"

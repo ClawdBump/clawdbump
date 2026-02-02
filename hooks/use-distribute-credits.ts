@@ -137,7 +137,7 @@ export function useDistributeCredits() {
 
       // Fetch credit balance from database (credit-balance API)
       // CRITICAL: This API returns WETH from database (user_credits.balance_wei)
-      // Only WETH from "Convert $BUMP to Credit" is counted, NOT direct WETH transfers
+      // Credits are added when user deposits ETH/WETH to their Smart Account
       console.log(`\n💰 Fetching credit balance from database (main wallet)...`)
       const creditResponse = await fetch("/api/credit-balance", {
         method: "POST",
@@ -146,24 +146,23 @@ export function useDistributeCredits() {
       })
       
       const creditData = await creditResponse.json()
-      // Use mainWalletCreditWei from database (only WETH from Convert $BUMP to Credit)
+      // Use mainWalletCreditWei from database (ETH/WETH deposits to Smart Account)
       const mainWalletCreditWei = BigInt(creditData.mainWalletCreditWei || "0")
 
       if (mainWalletCreditWei <= BigInt(0)) {
         throw new Error(
           "No credit available in main wallet.\n\n" +
-          "Please convert $BUMP to Credit first.\n" +
-          "Direct WETH transfers to your wallet are NOT counted as credit."
+          "Please deposit ETH or WETH to your Privy Smart Account to add credits."
         )
       }
       
-      console.log(`   → Credit from database: ${formatEther(mainWalletCreditWei)} WETH (from Convert $BUMP to Credit)`)
-      console.log(`   → Note: Only WETH from Convert $BUMP to Credit is counted`)
+      console.log(`   → Credit from database: ${formatEther(mainWalletCreditWei)} WETH`)
+      console.log(`   → Credits are added when ETH/WETH is deposited to Smart Account`)
 
       // =============================================
       // Calculate Distribution Amount
       // CRITICAL: Credit to distribute = WETH from database (user_credits.balance_wei)
-      // This is ONLY WETH from "Convert $BUMP to Credit" transactions
+      // Credits are added when ETH/WETH is deposited to Smart Account
       // We need to ensure we have enough WETH (or convert Native ETH to WETH)
       // =============================================
       setStatus("Calculating distribution amount...")
@@ -172,7 +171,7 @@ export function useDistributeCredits() {
       console.log(`   → Native ETH Balance (on-chain): ${formatEther(nativeEthBalance)} ETH`)
       console.log(`   → WETH Balance (on-chain): ${formatEther(wethBalance)} WETH`)
       console.log(`   → Total Available (ETH + WETH): ${formatEther(nativeEthBalance + wethBalance)} ETH`)
-      console.log(`   → Credit from database: ${formatEther(mainWalletCreditWei)} WETH (from Convert $BUMP to Credit)`)
+      console.log(`   → Credit from database: ${formatEther(mainWalletCreditWei)} WETH`)
 
       // Total available on-chain = Native ETH + WETH (for conversion if needed)
       const totalAvailable = nativeEthBalance + wethBalance
@@ -238,8 +237,7 @@ export function useDistributeCredits() {
           `Insufficient balance for distribution.\n` +
           `Available: ${formatEther(totalAvailable)} ETH (${formatEther(nativeEthBalance)} Native + ${formatEther(wethBalance)} WETH)\n` +
           `Credit to distribute: ${formatEther(creditToDistribute)} WETH\n\n` +
-          `Please convert $BUMP to Credit first.\n` +
-          `Direct WETH transfers are NOT counted as credit.`
+          `Please deposit more ETH or WETH to your Privy Smart Account.`
         )
       }
       
@@ -357,7 +355,7 @@ export function useDistributeCredits() {
       console.log(`\n📤 Sending INDIVIDUAL WETH transfers...`)
       console.log(`   → Smart Wallet: ${smartWalletAddress}`)
       console.log(`   → Total transfers: ${botWallets.length}`)
-      console.log(`   → Strategy: Individual WETH (ERC20) transfers (like Withdraw $BUMP) to avoid batch allowlist restrictions`)
+      console.log(`   → Strategy: Individual WETH (ERC20) transfers to avoid batch allowlist restrictions`)
       console.log(`   → Privy will automatically handle sponsorship via Dashboard configuration`)
 
       const txHashes: `0x${string}`[] = []
@@ -433,7 +431,7 @@ export function useDistributeCredits() {
               args: [checksumAddress as Address, amount],
             })
 
-            // Execute individual WETH transfer (same pattern as Withdraw $BUMP)
+            // Execute individual WETH transfer
             // Privy automatically handles sponsorship via Dashboard configuration
             const txHash = await smartWalletClient.sendTransaction({
               to: WETH_ADDRESS,
