@@ -592,7 +592,7 @@ async function pollActiveSessions() {
 
 async function startWorker() {
     console.log("\n=================================================")
-    console.log("🚀 FarBump Bumping Worker Started")
+    console.log("🚀 ClawdBump Bumping Worker Started")
     console.log("=================================================")
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`)
     console.log(`⏱️  Polling interval: ${POLLING_INTERVAL_MS / 1000}s`)

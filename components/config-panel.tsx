@@ -4,11 +4,9 @@ import { useState, useEffect } from "react"
 import { Card } from "@/components/ui/card"
 import { Slider } from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
-import { Clock, Coins, Fuel, ExternalLink, AlertCircle, ArrowRightLeft, ArrowDownUp, Loader2, DollarSign, Info } from "lucide-react"
+import { Clock, Fuel, ExternalLink, AlertCircle, ArrowRightLeft, ArrowDownUp, Loader2, DollarSign } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useBumpBalance } from "@/hooks/use-bump-balance"
-import { useFarcasterMiniApp } from "@/components/miniapp-provider"
-import { sdk } from "@farcaster/miniapp-sdk"
 import { WithdrawModal } from "@/components/withdraw-modal"
 import { useConvertFuel } from "@/hooks/use-convert-fuel"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -21,8 +19,8 @@ interface ConfigPanelProps {
   onBuyAmountChange?: (amount: string) => void
   intervalSeconds?: number
   onIntervalChange?: (seconds: number) => void
-  onCreditUpdate?: (options?: any) => Promise<any> | void // Callback to refetch credit balance after convert (React Query refetch)
-  isActive?: boolean // Lock settings when bot is running
+  onCreditUpdate?: (options?: any) => Promise<any> | void
+  isActive?: boolean
 }
 
 export function ConfigPanel({ 
@@ -34,22 +32,17 @@ export function ConfigPanel({
   intervalSeconds = 60,
   onIntervalChange,
   onCreditUpdate,
-  isActive = false // Lock settings when bot is running
+  isActive = false
 }: ConfigPanelProps) {
-  // Fetch $BUMP token balance from Smart Wallet address (same as WalletCard)
   const { formattedBalance, isLoading: isLoadingBalance } = useBumpBalance({
     address: smartWalletAddress || null,
     enabled: !!smartWalletAddress && smartWalletAddress !== "0x000...000",
   })
-  const { isInWarpcast } = useFarcasterMiniApp()
   
-  // Bump Speed: Slider value in seconds (2-600 seconds = 2 seconds to 10 minutes)
-  // Use controlled prop or fallback to internal state
   const [internalInterval, setInternalInterval] = useState(60)
   const currentInterval = intervalSeconds !== undefined ? intervalSeconds : internalInterval
   const [bumpSpeedSeconds, setBumpSpeedSeconds] = useState([currentInterval])
   
-  // Sync bumpSpeedSeconds with currentInterval when prop changes
   useEffect(() => {
     if (intervalSeconds !== undefined && intervalSeconds !== bumpSpeedSeconds[0]) {
       setBumpSpeedSeconds([intervalSeconds])
@@ -66,7 +59,6 @@ export function ConfigPanel({
     }
   }
   
-  // Use controlled props or fallback to internal state
   const [internalAmount, setInternalAmount] = useState("0.0001")
   
   const amount = buyAmountUsd !== undefined ? buyAmountUsd : internalAmount
@@ -79,7 +71,6 @@ export function ConfigPanel({
     }
   }
   
-  // Format seconds to human-readable format
   const formatInterval = (seconds: number): string => {
     if (seconds < 60) {
       return `${seconds}s`
@@ -96,12 +87,12 @@ export function ConfigPanel({
       return `${hours}h ${remainingMinutes}m`
     }
   }
+  
   const [withdrawModalOpen, setWithdrawModalOpen] = useState(false)
   const [convertModalOpen, setConvertModalOpen] = useState(false)
   const [convertAmount, setConvertAmount] = useState("")
   const [needsApproval, setNeedsApproval] = useState(false)
   
-  // Convert $BUMP to Credit hook
   const { 
     convert, 
     approve,
@@ -115,30 +106,21 @@ export function ConfigPanel({
     swapStatus 
   } = useConvertFuel()
   
-  // Check if approval is needed when amount changes
   useEffect(() => {
     const checkApproval = async () => {
       if (!smartWalletAddress || !convertAmount || parseFloat(convertAmount) <= 0) {
         setNeedsApproval(false)
         return
       }
-      
-      // This will be checked in the convert function, but we can show UI hint
-      // For now, we'll assume approval might be needed
       setNeedsApproval(true)
     }
     
     checkApproval()
   }, [convertAmount, smartWalletAddress])
   
-  // Close modal and reset on success
-  // CRITICAL: Refetch credit balance after successful convert to update UI in real-time
   useEffect(() => {
     if (convertSuccess && convertModalOpen) {
-      // Trigger credit balance refetch to update UI immediately
-      // This ensures button text updates from "No Fuel Detected" to "Generate Bot Wallet" or "Start Bumping"
       if (onCreditUpdate) {
-        // Small delay to ensure backend has processed the sync-credit API call
         setTimeout(() => {
           onCreditUpdate()
         }, 1000)
@@ -148,38 +130,13 @@ export function ConfigPanel({
         setConvertModalOpen(false)
         setConvertAmount("")
         resetConvert()
-      }, 3000) // Close after 3 seconds
+      }, 3000)
       return () => clearTimeout(timer)
     }
   }, [convertSuccess, convertModalOpen, resetConvert, onCreditUpdate])
 
-  // Handle Buy $BUMP using Farcaster Native Swap
-  // Based on: https://miniapps.farcaster.xyz/docs/sdk/actions/swap-token#buytoken-optional
-  // Format: CAIP-19 asset ID (eip155:chainId/erc20:address)
-  const handleBuyBump = async () => {
-    if (!isInWarpcast) {
-      // Fallback to external link if not in Warpcast
-      window.open(`https://app.uniswap.org/swap?chain=base&outputCurrency=0x94ce728849431818ec9a0cf29bdb24fe413bbb07`, '_blank')
-      return
-    }
-
-    try {
-      // Use Farcaster SDK swapToken action for native swap
-      // CAIP-19 format: eip155:8453/erc20:0x94ce728849431818ec9a0cf29bdb24fe413bbb07
-      const result = await sdk.actions.swapToken({
-        buyToken: "eip155:8453/erc20:0x94ce728849431818ec9a0cf29bdb24fe413bbb07", // $BUMP token on Base
-      })
-
-      if (result.success) {
-        console.log("✅ Swap successful:", result.swap.transactions)
-      } else {
-        console.warn("⚠️ Swap rejected or failed:", result.reason)
-      }
-    } catch (error) {
-      console.error("Failed to open swap interface:", error)
-      // Fallback to external link
-      window.open(`https://app.uniswap.org/swap?chain=base&outputCurrency=0x94ce728849431818ec9a0cf29bdb24fe413bbb07`, '_blank')
-    }
+  const handleBuyBump = () => {
+    window.open(`https://app.uniswap.org/swap?chain=base&outputCurrency=0x94ce728849431818ec9a0cf29bdb24fe413bbb07`, '_blank')
   }
 
   return (
@@ -234,7 +191,6 @@ export function ConfigPanel({
                         inputMode="numeric"
                         value={convertAmount}
                         onChange={(e) => {
-                          // Only allow whole numbers (integers), no decimals
                           const value = e.target.value.replace(/[^0-9]/g, '')
                           setConvertAmount(value)
                         }}
@@ -250,7 +206,6 @@ export function ConfigPanel({
                         className="absolute right-1 top-1/2 -translate-y-1/2 h-7 px-2 text-xs font-medium hover:bg-secondary"
                         onClick={() => {
                           if (formattedBalance && !isLoadingBalance) {
-                            // Remove commas and parse as integer (no decimals)
                             const maxAmount = Math.floor(parseFloat(formattedBalance.replace(/,/g, ''))).toString()
                             setConvertAmount(maxAmount)
                           }
@@ -283,7 +238,7 @@ export function ConfigPanel({
                   {convertSuccess && convertHash && (
                     <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-3">
                       <p className="text-sm text-green-600 dark:text-green-400 font-medium">
-                        ✅ Conversion successful!
+                        Conversion successful!
                       </p>
                       <a
                         href={`https://basescan.org/tx/${convertHash}`}
@@ -299,7 +254,7 @@ export function ConfigPanel({
                   {approvalHash && (
                     <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-2">
                       <p className="text-xs text-green-600 dark:text-green-400">
-                        ✅ Approval confirmed
+                        Approval confirmed
                       </p>
                       <a
                         href={`https://basescan.org/tx/${approvalHash}`}
@@ -320,18 +275,10 @@ export function ConfigPanel({
                           return
                         }
                         try {
-                          // Step 1: Auto-approve first if needed (will check allowance internally)
-                          // The approve function will check allowance and only approve if needed
-                          console.log("🔐 Step 1: Checking and approving if needed...")
                           await approve()
                           setNeedsApproval(false)
-                          console.log("✅ Step 1: Approval completed")
-                          
-                          // Step 2: Convert after approval is confirmed
-                          console.log("💱 Step 2: Starting conversion...")
                           await convert(convertAmount)
                         } catch (err: any) {
-                          // Error already handled in hooks
                           console.error("Error in convert flow:", err)
                         }
                       }}
@@ -374,7 +321,7 @@ export function ConfigPanel({
               className="w-full border-primary/20 text-primary hover:bg-primary/10 font-medium bg-transparent"
               onClick={handleBuyBump}
               disabled={!smartWalletAddress}
-              title={!smartWalletAddress ? "Smart Wallet not ready" : "Buy $BUMP using Farcaster Native Swap"}
+              title={!smartWalletAddress ? "Smart Wallet not ready" : "Buy $BUMP on Uniswap"}
             >
               <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
               Buy $BUMP
@@ -431,7 +378,7 @@ export function ConfigPanel({
               min={2}
               max={600}
               step={1}
-              disabled={isActive} // Lock when bot is running
+              disabled={isActive}
               className={isActive ? "cursor-not-allowed opacity-50" : "cursor-pointer"}
             />
             <div className="flex justify-between text-xs text-muted-foreground">
@@ -454,7 +401,7 @@ export function ConfigPanel({
                 type="number"
                 value={amount}
                 onChange={(e) => handleAmountChange(e.target.value)}
-                disabled={isActive} // Lock when bot is running
+                disabled={isActive}
                 className="font-mono pr-16 bg-secondary border-border text-foreground"
                 step="0.01"
                 min="0"
@@ -464,7 +411,7 @@ export function ConfigPanel({
               </span>
             </div>
             <p className="text-xs text-muted-foreground">
-              Amount per swap execution (minimum $0.01 USD, continuously until you stop the bot)
+              Amount in USD per bump transaction (minimum $0.01)
             </p>
           </div>
         </div>

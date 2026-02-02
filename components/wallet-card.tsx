@@ -89,7 +89,7 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
             </div>
             <p className="font-mono text-xs text-foreground break-all">{smartWalletAddress || "0x000...000"}</p>
             <p className="text-[10px] leading-tight text-muted-foreground pt-0.5">
-              Dedicated secure wallet for FarBump automation on Base Network.
+              Dedicated secure wallet for ClawdBump automation on Base Network.
             </p>
           </div>
         </div>

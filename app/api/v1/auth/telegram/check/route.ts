@@ -7,10 +7,10 @@ export const dynamic = "force-dynamic"
 /**
  * GET /api/v1/auth/telegram/check
  * 
- * Check if a Telegram user has logged in to FarBump
+ * Check if a Telegram user has logged in to ClawdBump
  * 
  * This endpoint is used by ClawdBumpbot to check if a Telegram user
- * has logged in to FarBump via Telegram OAuth.
+ * has logged in to ClawdBump via Telegram OAuth.
  * 
  * Query Parameters:
  * - telegram_id (required): Telegram user ID to check
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
       if (error.code === "PGRST116") {
         return NextResponse.json({
           is_logged_in: false,
-          message: "User has not logged in to FarBump via Telegram",
+          message: "User has not logged in to ClawdBump via Telegram",
         })
       }
 
@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
     if (!data) {
       return NextResponse.json({
         is_logged_in: false,
-        message: "User has not logged in to FarBump via Telegram",
+        message: "User has not logged in to ClawdBump via Telegram",
       })
     }
 

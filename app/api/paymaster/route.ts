@@ -138,10 +138,10 @@ export async function POST(request: NextRequest) {
     // Add trusted server headers for Paymaster requests
     // These headers help simulate a request from a trusted server
     if (method === "pm_getPaymasterStubData" || method === "pm_getPaymasterData") {
-      headers["User-Agent"] = "FarBump-Server/1.0"
+      headers["User-Agent"] = "ClawdBump-Server/1.0"
       headers["X-Requested-With"] = "XMLHttpRequest"
-      headers["Origin"] = request.headers.get("origin") || "https://farbump.vercel.app"
-      headers["Referer"] = request.headers.get("referer") || "https://farbump.vercel.app"
+      headers["Origin"] = request.headers.get("origin") || "https://clawdbump.vercel.app"
+      headers["Referer"] = request.headers.get("referer") || "https://clawdbump.vercel.app"
       
       // Add server identification headers
       headers["X-Server-Proxy"] = "true"
