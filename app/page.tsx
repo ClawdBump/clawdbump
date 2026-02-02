@@ -267,18 +267,77 @@ export default function BumpBotDashboard() {
   // Get Telegram account from user
   const telegramAccount = user?.linkedAccounts?.find((account: any) => account.type === 'telegram')
   
+  // Debug: Log the full telegramAccount object to see field names
+  useEffect(() => {
+    if (telegramAccount) {
+      console.log("[v0] Telegram account object from Privy:", JSON.stringify(telegramAccount, null, 2))
+    }
+  }, [telegramAccount])
+
+  // Extract telegram ID - Privy uses telegramUserId (camelCase)
+  const telegramId = telegramAccount 
+    ? ((telegramAccount as any).telegramUserId || 
+       (telegramAccount as any).telegram_user_id || 
+       (telegramAccount as any).id ||
+       (telegramAccount as any).subject ||
+       null)
+    : null
+
   const telegramUsername = telegramAccount 
     ? ((telegramAccount as any).username 
         ? `@${(telegramAccount as any).username}` 
-        : (telegramAccount as any).first_name || null)
+        : (telegramAccount as any).firstName || (telegramAccount as any).first_name || null)
     : null
 
   const telegramPhotoUrl = telegramAccount 
-    ? ((telegramAccount as any).photo_url || null)
+    ? ((telegramAccount as any).photoUrl || (telegramAccount as any).photo_url || null)
     : null
 
   const username = telegramUsername || null
   const userAvatar = telegramPhotoUrl || null
+
+  // Track if we've synced Telegram user to database
+  const hasSyncedTelegramRef = useRef(false)
+
+  // Sync Telegram user data to database when user logs in with Telegram
+  useEffect(() => {
+    const syncTelegramToDatabase = async () => {
+      // Skip if already synced, or missing required data
+      if (hasSyncedTelegramRef.current) return
+      if (!authenticated || !privySmartWalletAddress || !telegramId || !user?.id) return
+      
+      try {
+        console.log("[v0] Syncing Telegram user to database...", {
+          telegram_id: telegramId,
+          smart_account_address: privySmartWalletAddress,
+          privy_did: user.id,
+        })
+
+        const response = await fetch("/api/v1/auth/telegram/upsert-wallet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            telegram_id: String(telegramId),
+            wallet_address: privySmartWalletAddress.toLowerCase(),
+            privy_user_id: user.id,
+          }),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          console.log("[v0] Telegram user synced to database successfully:", data)
+          hasSyncedTelegramRef.current = true
+        } else {
+          const errorData = await response.json()
+          console.error("[v0] Failed to sync Telegram user to database:", errorData)
+        }
+      } catch (error) {
+        console.error("[v0] Error syncing Telegram user to database:", error)
+      }
+    }
+
+    syncTelegramToDatabase()
+  }, [authenticated, privySmartWalletAddress, telegramId, user?.id])
 
   const isWalletReady = !!privySmartWalletAddress
   const isConnected = authenticated && isWalletReady
