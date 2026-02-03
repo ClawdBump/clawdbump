@@ -4,9 +4,7 @@ import { useState } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Copy, Check, Shield, RefreshCw } from "lucide-react"
-import { useCreditBalance } from "@/hooks/use-credit-balance"
-import { usePublicClient } from "wagmi"
-import { formatEther } from "viem"
+import { useBlockchainBalance } from "@/hooks/use-blockchain-balance"
 import { toast } from "sonner"
 
 interface WalletCardProps {
@@ -14,28 +12,38 @@ interface WalletCardProps {
   credits?: number
   walletAddress?: string | null
   isSmartAccountActive?: boolean
+  ethPriceUsd?: number // ETH price for USD conversion
 }
 
-export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmartAccountActive = false }: WalletCardProps) {
+export function WalletCard({ 
+  fuelBalance = 0, 
+  credits = 0, 
+  walletAddress, 
+  isSmartAccountActive = false,
+  ethPriceUsd = 3000,
+}: WalletCardProps) {
   const [copied, setCopied] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const publicClient = usePublicClient()
   
   // Privy Smart Wallet address
   const smartWalletAddress = walletAddress || "0x000...000"
 
-  // Fetch credit balance from database
+  // Fetch balance directly from blockchain (auto-refresh every 10 seconds)
   const { 
-    data: creditData, 
-    isLoading: isLoadingCredit,
-    refetch: refetchCredit 
-  } = useCreditBalance(
+    balance: blockchainBalance, 
+    isLoading: isLoadingBalance,
+    refetch: refetchBalance
+  } = useBlockchainBalance(
     smartWalletAddress !== "0x000...000" ? smartWalletAddress : null,
-    { enabled: isSmartAccountActive && smartWalletAddress !== "0x000...000" }
+    { 
+      enabled: isSmartAccountActive && smartWalletAddress !== "0x000...000",
+      refetchInterval: 10000, // Auto-refresh every 10 seconds
+      ethPriceUsd,
+    }
   )
 
-  // Use credit from database if available, otherwise fallback to prop
-  const displayCredit = creditData?.balanceUsd ?? credits
+  // Use blockchain balance if available, otherwise fallback to prop
+  const displayCredit = blockchainBalance?.totalUsd ?? credits
 
   const handleCopy = () => {
     navigator.clipboard.writeText(smartWalletAddress)
@@ -44,8 +52,7 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
   }
 
   /**
-   * Fetch balance from blockchain (on-chain) and sync with database
-   * This ensures credit balance reflects actual on-chain balance (Native ETH + WETH)
+   * Manual refresh - fetch balance from blockchain immediately
    */
   const handleRefreshBalance = async () => {
     if (!smartWalletAddress || smartWalletAddress === "0x000...000" || !isSmartAccountActive) {
@@ -55,114 +62,60 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
     
     setIsRefreshing(true)
     try {
-      console.log("🔄 Fetching balance from blockchain...")
+      console.log("🔄 Refreshing balance from blockchain...")
+      await refetchBalance()
       
-      // WETH Contract on Base
-      const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
-      const WETH_ABI = [
-        {
-          inputs: [{ name: "account", type: "address" }],
-          name: "balanceOf",
-          outputs: [{ name: "", type: "uint256" }],
-          stateMutability: "view",
-          type: "function",
-        },
-      ] as const
-      
-      // Fetch Native ETH balance
-      const nativeEthBalance = await publicClient.getBalance({
-        address: smartWalletAddress as `0x${string}`,
-      })
-      
-      // Fetch WETH balance
-      let wethBalance = BigInt(0)
-      try {
-        wethBalance = await publicClient.readContract({
-          address: WETH_ADDRESS,
-          abi: WETH_ABI,
-          functionName: "balanceOf",
-          args: [smartWalletAddress as `0x${string}`],
-        }) as bigint
-      } catch (error) {
-        console.warn("Failed to fetch WETH balance:", error)
-      }
-      
-      // Total on-chain balance
-      const totalOnChainBalanceWei = nativeEthBalance + wethBalance
-      const totalEth = formatEther(totalOnChainBalanceWei)
-      
-      console.log(`✅ On-chain balance: ${totalEth} ETH (${formatEther(nativeEthBalance)} Native + ${formatEther(wethBalance)} WETH)`)
-      
-      // Sync with database if needed
-      try {
-        const syncResponse = await fetch("/api/credit/add", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userAddress: smartWalletAddress,
-            syncOnly: true, // Only sync, don't add
-          }),
+      if (blockchainBalance) {
+        const nativeEth = parseFloat(blockchainBalance.nativeEthFormatted)
+        const weth = parseFloat(blockchainBalance.wethFormatted)
+        const total = parseFloat(blockchainBalance.totalFormatted)
+        
+        toast.success("Balance updated!", {
+          description: `${total.toFixed(4)} ETH total (${nativeEth.toFixed(4)} Native + ${weth.toFixed(4)} WETH) ≈ $${blockchainBalance.totalUsd.toFixed(2)}`,
         })
-        
-        const syncData = await syncResponse.json()
-        
-        if (syncResponse.ok && syncData.success) {
-          console.log("✅ Database synced with on-chain balance")
-          toast.success("Balance updated from blockchain", {
-            description: `${totalEth} ETH (${formatEther(nativeEthBalance)} Native + ${formatEther(wethBalance)} WETH)`,
-          })
-        } else {
-          console.warn("Failed to sync database:", syncData.error)
-          toast.warning("Fetched from blockchain but failed to sync database", {
-            description: syncData.error || "Unknown error",
-          })
-        }
-      } catch (syncError: any) {
-        console.error("Failed to sync with database:", syncError)
-        toast.warning("Fetched from blockchain but failed to sync database")
       }
-      
-      // Refetch from database to get updated balance
-      await refetchCredit()
-      
     } catch (error: any) {
-      console.error("❌ Failed to refresh balance:", error)
-      toast.error("Failed to fetch balance from blockchain", {
-        description: error.message || "Unknown error",
-      })
+      console.error("Error refreshing balance:", error)
+      toast.error("Failed to refresh balance")
     } finally {
+      // Keep spinner for 500ms minimum for UX
       setTimeout(() => setIsRefreshing(false), 500)
     }
   }
-  
-  const showSpinner = isLoadingCredit || isRefreshing
+
+  // Show loading/spinner state
+  const showSpinner = isLoadingBalance || isRefreshing
 
   return (
     <Card className="border border-border bg-card p-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 border border-primary/20">
-            <Shield className="h-5 w-5 text-primary" />
-          </div>
-          <div className="flex-1 space-y-1">
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-medium text-foreground">Privy Smart Wallet</p>
-              {isSmartAccountActive && (
-                <span className="inline-flex items-center rounded-full bg-primary/20 border border-primary/30 px-2 py-0.5 text-[10px] font-semibold text-primary">
-                  Smart Account Active
-                </span>
-              )}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-foreground">Smart Wallet</h2>
+          <Shield className="h-4 w-4 text-primary" />
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">Address</p>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 rounded-md border border-border bg-secondary px-3 py-2">
+              <p className="font-mono text-xs text-foreground truncate">
+                {smartWalletAddress}
+              </p>
             </div>
-            <p className="font-mono text-xs text-foreground break-all">{smartWalletAddress || "0x000...000"}</p>
-            <p className="text-[10px] leading-tight text-muted-foreground pt-0.5">
-              Dedicated secure wallet for ClawdBump automation on Base Network.
-            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleCopy}
+              className="h-9 w-9 p-0 hover:bg-muted/50"
+            >
+              {copied ? (
+                <Check className="h-4 w-4 text-green-500" />
+              ) : (
+                <Copy className="h-4 w-4 text-muted-foreground" />
+              )}
+            </Button>
           </div>
         </div>
-        <Button size="sm" variant="ghost" className="shrink-0 h-8 w-8 p-0 hover:bg-muted" onClick={handleCopy}>
-          {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4 text-muted-foreground" />}
-        </Button>
-      </div>
 
       <div className="mt-4">
         <div className="rounded-lg bg-secondary border border-border p-3">
@@ -170,12 +123,17 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
             <div className="flex-1">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Credits</p>
               <p className="font-mono text-sm font-semibold text-primary">
-                {isLoadingCredit ? (
+                {showSpinner ? (
                   <span className="text-muted-foreground">Loading...</span>
                 ) : (
                   `$${displayCredit.toFixed(2)}`
                 )}
               </p>
+              {blockchainBalance && !showSpinner && (
+                <p className="text-[9px] text-muted-foreground mt-1">
+                  {parseFloat(blockchainBalance.nativeEthFormatted).toFixed(4)} Native ETH + {parseFloat(blockchainBalance.wethFormatted).toFixed(4)} WETH
+                </p>
+              )}
             </div>
             <Button
               size="sm"
@@ -183,16 +141,18 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
               onClick={handleRefreshBalance}
               disabled={showSpinner || !isSmartAccountActive}
               className="h-6 w-6 p-0 hover:bg-muted/50 shrink-0 disabled:opacity-50"
-              title="Refresh credit balance"
+              title="Refresh credit balance from blockchain"
             >
               <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${showSpinner ? "animate-spin" : ""}`} />
             </Button>
           </div>
           <p className="text-[9px] text-muted-foreground mt-2">
-            Deposit ETH or WETH to your Smart Wallet to add credits
+            Auto-updates every 10 seconds • On-chain balance
           </p>
         </div>
       </div>
+    </div>
     </Card>
   )
 }
+

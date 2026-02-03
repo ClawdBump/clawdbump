@@ -208,6 +208,7 @@ export default function BumpBotDashboard() {
   const [activeTab, setActiveTab] = useState("control")
   const [bumpLoadingState, setBumpLoadingState] = useState<string | null>(null)
   const [botWallets, setBotWallets] = useState<Array<{ smartWalletAddress: string; index: number }> | null>(null)
+  const [ethPriceUsd, setEthPriceUsd] = useState<number>(3000) // Default ETH price, will be updated
   
   const { data: creditData, isLoading: isLoadingCredit, refetch: refetchCredit } = useCreditBalance(privySmartWalletAddress, {
     enabled: !!privySmartWalletAddress,
@@ -447,9 +448,10 @@ export default function BumpBotDashboard() {
         if (!priceData.success || !priceData.price) {
           throw new Error("Failed to fetch ETH price")
         }
-        const ethPriceUsd = priceData.price
+        const fetchedEthPrice = priceData.price
+        setEthPriceUsd(fetchedEthPrice) // Update state for WalletCard
         
-        const requiredAmountEth = amountUsdValue / ethPriceUsd
+        const requiredAmountEth = amountUsdValue / fetchedEthPrice
         const requiredAmountWei = BigInt(Math.floor(requiredAmountEth * 1e18))
         
         let totalBotWethBalanceWei = BigInt(0)
@@ -778,6 +780,7 @@ export default function BumpBotDashboard() {
               credits={credits} 
               walletAddress={privySmartWalletAddress}
               isSmartAccountActive={!!privySmartWalletAddress}
+              ethPriceUsd={ethPriceUsd}
             />
             <TokenInput 
               initialAddress={targetTokenAddress}
