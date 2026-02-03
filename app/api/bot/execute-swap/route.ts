@@ -278,7 +278,7 @@ export async function POST(request: NextRequest) {
         amount_wei: onChainWethBalance.toString(),
         action: "swap_skipped",
         message: `[System] Bot #${walletIndex + 1} has insufficient ON-CHAIN WETH balance (${formatEther(onChainWethBalance)} WETH < ${formatEther(amountWei)} WETH required).`,
-        status: "warning",
+        status: "failed",
         created_at: new Date().toISOString(),
       })
 
@@ -341,7 +341,7 @@ export async function POST(request: NextRequest) {
           amount_wei: "0",
           action: "session_stopped",
           message: `[System] All 5 bot wallets have insufficient ON-CHAIN WETH balance for swap. Bumping session stopped automatically.`,
-          status: "info",
+          status: "success",
           created_at: new Date().toISOString(),
         })
 
@@ -567,7 +567,7 @@ export async function POST(request: NextRequest) {
               amount_wei: "0",
               action: "session_stopped",
               message: `[System] All 5 bot wallets have insufficient WETH balance for swap (conversion failed). Bumping session stopped automatically.`,
-              status: "info",
+              status: "success",
               created_at: new Date().toISOString(),
             })
 
@@ -585,7 +585,7 @@ export async function POST(request: NextRequest) {
             amount_wei: amountWei.toString(),
             action: "swap_skipped",
             message: `[System] Bot #${walletIndex + 1} WETH balance insufficient (${formatEther(wethBalanceWei)} < ${formatEther(amountWei)}). Conversion failed.`,
-            status: "warning",
+            status: "failed",
             created_at: new Date().toISOString(),
           })
 
@@ -647,7 +647,7 @@ export async function POST(request: NextRequest) {
           amount_wei: "0",
           action: "session_stopped",
             message: `[System] All 5 bot wallets have insufficient WETH balance for swap (not enough Native ETH to convert). Bumping session stopped automatically.`,
-            status: "info",
+            status: "success",
             created_at: new Date().toISOString(),
           })
 
@@ -665,7 +665,7 @@ export async function POST(request: NextRequest) {
           amount_wei: amountWei.toString(),
           action: "swap_skipped",
           message: `[System] Bot #${walletIndex + 1} WETH balance insufficient (${formatEther(wethBalanceWei)} < ${formatEther(amountWei)}). Not enough Native ETH to convert.`,
-          status: "warning",
+          status: "failed",
           created_at: new Date().toISOString(),
         })
 
@@ -1438,63 +1438,93 @@ export async function POST(request: NextRequest) {
           .eq("id", logEntry.id)
       }
 
-      // Step 12: Deduct WETH balance from database and record swap history
-      console.log(`💰 Deducting WETH balance from database...`)
+      // Step 12: Sync bot wallet balance with on-chain balance after successful swap
+      console.log(`💰 Syncing bot wallet balance with on-chain balance after swap...`)
       
       // Get buyAmount from quote if available
       const buyAmountWei = quote.buyAmount ? BigInt(quote.buyAmount) : BigInt(0)
       
       try {
-        // CRITICAL: Deduct WETH balance from bot_wallet_credits after successful swap
-        // This ensures credit balance decreases when WETH is consumed for swaps
+        // CRITICAL: After successful swap, sync database with actual on-chain balance
+        // This ensures database always reflects the true balance (Native ETH + WETH)
         // 
-        // Credit Flow:
-        // 1. Convert $BUMP → Credit: user_credits.balance_wei increases
-        // 2. Distribute Credits: user_credits.balance_wei decreases, bot_wallet_credits.weth_balance_wei increases
-        // 3. Execute Swap: bot_wallet_credits.weth_balance_wei decreases (here)
+        // Why sync instead of deduct:
+        // - Swap may use Native ETH (converted to WETH) or WETH directly
+        // - Gas fees reduce balance
+        // - On-chain balance is the source of truth
         // 
-        // IMPORTANT: Only 1 row per bot_wallet_address (unique constraint)
-        // Only weth_balance_wei is used (distributed_amount_wei removed)
+        // Fetch current on-chain balance (Native ETH + WETH)
+        let onChainNativeEth = BigInt(0)
+        let onChainWeth = BigInt(0)
+        
+        try {
+          onChainNativeEth = await publicClient.getBalance({
+            address: smartAccountAddress,
+          })
+          console.log(`   → On-chain Native ETH: ${formatEther(onChainNativeEth)} ETH`)
+        } catch (error: any) {
+          console.warn(`   ⚠️ Failed to fetch Native ETH balance: ${error.message}`)
+        }
+        
+        try {
+          onChainWeth = await publicClient.readContract({
+            address: WETH_ADDRESS,
+            abi: WETH_ABI,
+            functionName: "balanceOf",
+            args: [smartAccountAddress],
+          }) as bigint
+          console.log(`   → On-chain WETH: ${formatEther(onChainWeth)} WETH`)
+        } catch (error: any) {
+          console.warn(`   ⚠️ Failed to fetch WETH balance: ${error.message}`)
+        }
+        
+        const totalOnChainBalance = onChainNativeEth + onChainWeth
+        console.log(`   → Total on-chain balance: ${formatEther(totalOnChainBalance)} ETH (${formatEther(onChainNativeEth)} Native + ${formatEther(onChainWeth)} WETH)`)
+        
+        // Update bot_wallet_credits with on-chain balance
         const { data: creditRecord, error: fetchCreditError } = await supabase
           .from("bot_wallet_credits")
-          .select("id, weth_balance_wei")
+          .select("id, native_eth_balance_wei, weth_balance_wei")
           .eq("user_address", user_address.toLowerCase())
           .eq("bot_wallet_address", smartAccountAddress.toLowerCase())
           .single()
 
         if (!fetchCreditError && creditRecord) {
-          const currentBalance = BigInt(creditRecord.weth_balance_wei || "0")
+          // Update with on-chain balance
+          const { error: updateError } = await supabase
+            .from("bot_wallet_credits")
+            .update({ 
+              native_eth_balance_wei: onChainNativeEth.toString(),
+              weth_balance_wei: onChainWeth.toString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", creditRecord.id)
           
-          if (currentBalance >= amountWei) {
-            // Deduct swap amount from bot wallet credit
-            const newBalance = currentBalance - amountWei
-            
-            const { error: updateError } = await supabase
-              .from("bot_wallet_credits")
-              .update({ 
-                weth_balance_wei: newBalance.toString(),
-              })
-              .eq("id", creditRecord.id)
-            
-            if (updateError) {
-              console.error(`   ❌ Error updating WETH balance:`, updateError)
-            } else {
-              console.log(`   ✅ WETH balance deducted: ${formatEther(amountWei)} WETH`)
-              console.log(`   → Remaining balance: ${formatEther(newBalance)} WETH`)
-              console.log(`   → Credit balance updated correctly after swap`)
-            }
+          if (updateError) {
+            console.error(`   ❌ Error syncing balance:`, updateError)
           } else {
-            console.warn(`   ⚠️ Insufficient WETH balance: ${formatEther(currentBalance)} < ${formatEther(amountWei)}`)
-            // Set to 0 if insufficient (all credit consumed)
-            await supabase
-              .from("bot_wallet_credits")
-              .update({ weth_balance_wei: "0" })
-              .eq("id", creditRecord.id)
-            console.log(`   → Bot wallet credit set to 0 (all consumed)`)
+            console.log(`   ✅ Bot wallet balance synced with on-chain balance`)
+            console.log(`   → Native ETH: ${formatEther(onChainNativeEth)} ETH`)
+            console.log(`   → WETH: ${formatEther(onChainWeth)} WETH`)
+            console.log(`   → Total: ${formatEther(totalOnChainBalance)} ETH`)
           }
         } else {
-          console.warn(`   ⚠️ No credit record found for bot wallet`)
-          console.warn(`   → Swap executed but credit balance not updated (record missing)`)
+          // Create record if it doesn't exist
+          console.log(`   → Creating bot_wallet_credits record...`)
+          const { error: insertError } = await supabase
+            .from("bot_wallet_credits")
+            .insert({
+              user_address: user_address.toLowerCase(),
+              bot_wallet_address: smartAccountAddress.toLowerCase(),
+              native_eth_balance_wei: onChainNativeEth.toString(),
+              weth_balance_wei: onChainWeth.toString(),
+            })
+          
+          if (insertError) {
+            console.error(`   ❌ Error creating credit record:`, insertError)
+          } else {
+            console.log(`   ✅ Bot wallet credit record created with on-chain balance`)
+          }
         }
 
         // Record swap in bot_logs table (swap_history is not needed, we use bot_logs)
@@ -1507,29 +1537,32 @@ export async function POST(request: NextRequest) {
         // Don't throw - swap succeeded, just log error
       }
 
-      // Log remaining WETH balance from database
-      // IMPORTANT: Only 1 row per bot_wallet_address, only weth_balance_wei is used
+      // Log remaining balance (Native ETH + WETH) from database after sync
       const { data: remainingCredit } = await supabase
         .from("bot_wallet_credits")
-        .select("weth_balance_wei")
+        .select("native_eth_balance_wei, weth_balance_wei")
         .eq("user_address", user_address.toLowerCase())
         .eq("bot_wallet_address", smartAccountAddress.toLowerCase())
         .single()
 
-      const remainingWethBalance = remainingCredit 
+      const remainingNativeEth = remainingCredit 
+        ? BigInt(remainingCredit.native_eth_balance_wei || "0")
+        : BigInt(0)
+      const remainingWeth = remainingCredit 
         ? BigInt(remainingCredit.weth_balance_wei || "0")
         : BigInt(0)
+      const totalRemainingBalance = remainingNativeEth + remainingWeth
 
-      const remainingBalanceUsd = Number(formatEther(remainingWethBalance)) * ethPriceUsd
+      const remainingBalanceUsd = Number(formatEther(totalRemainingBalance)) * ethPriceUsd
 
       await supabase.from("bot_logs").insert({
         user_address: user_address.toLowerCase(),
         bot_wallet_address: smartAccountAddress.toLowerCase(),
         token_address: token_address,
-        amount_wei: remainingWethBalance.toString(),
-        action: "balance_check",
-        message: `[System] Remaining WETH balance in Bot #${walletIndex + 1}: ${formatEther(remainingWethBalance)} WETH ($${remainingBalanceUsd.toFixed(2)})`,
-        status: "info",
+        amount_wei: totalRemainingBalance.toString(),
+        action: "balance_synced",
+        message: `[System] Bot #${walletIndex + 1} balance synced: ${formatEther(remainingNativeEth)} Native ETH + ${formatEther(remainingWeth)} WETH = ${formatEther(totalRemainingBalance)} ETH total ($${remainingBalanceUsd.toFixed(2)})`,
+        status: "success",
         created_at: new Date().toISOString(),
       })
 
@@ -1593,7 +1626,7 @@ export async function POST(request: NextRequest) {
           amount_wei: "0",
           action: "session_stopped",
           message: `[System] All 5 bot wallets have insufficient ON-CHAIN WETH balance after swap. Bumping session stopped automatically.`,
-          status: "info",
+          status: "success",
           created_at: new Date().toISOString(),
         })
 
@@ -1699,7 +1732,7 @@ export async function POST(request: NextRequest) {
           amount_wei: "0",
           action: "session_stopped",
             message: `[System] All 5 bot wallets have insufficient ON-CHAIN WETH balance after swap error. Bumping session stopped automatically.`,
-            status: "info",
+            status: "success",
             created_at: new Date().toISOString(),
           })
 
