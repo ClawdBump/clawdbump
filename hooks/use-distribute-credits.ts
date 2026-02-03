@@ -9,8 +9,15 @@ import { toast } from "sonner"
 // WETH Contract Address (Base Network)
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
 
-// WETH ABI for deposit and transfer
+// WETH ABI for balance check, deposit and transfer
 const WETH_ABI = [
+  {
+    inputs: [{ name: "account", type: "address" }],
+    name: "balanceOf",
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
   {
     inputs: [],
     name: "deposit",
@@ -75,6 +82,10 @@ export function useDistributeCredits() {
     try {
       if (!smartWalletClient || !privySmartWalletAddress) {
         throw new Error("Smart Wallet client not found. Please login again.")
+      }
+
+      if (!publicClient) {
+        throw new Error("Public client not initialized. Please refresh the page.")
       }
 
       const smartWalletAddress = userAddress.toLowerCase() === privySmartWalletAddress.toLowerCase()
@@ -666,5 +677,14 @@ export function useDistributeCredits() {
     }
   }, [smartWalletClient, privySmartWalletAddress, publicClient, reset])
 
-  return { distribute, hash, isPending, isSuccess, error, status, reset }
+  return { 
+    distributeCredits: distribute, // Alias for backward compatibility
+    distribute, 
+    hash, 
+    isPending, 
+    isSuccess, 
+    error, 
+    status, 
+    reset 
+  }
 }
