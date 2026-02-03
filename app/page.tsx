@@ -226,7 +226,12 @@ export default function BumpBotDashboard() {
   } = useBotSession(privySmartWalletAddress)
   
   // Bot wallets state
-  const [existingBotWallets, setExistingBotWallets] = useState<Array<{ smartWalletAddress: string; index: number }> | null>(null)
+  const [existingBotWallets, setExistingBotWallets] = useState<Array<{ 
+    smartWalletAddress: string
+    ownerAddress?: string
+    network?: string
+    index: number 
+  }> | null>(null)
   const [isLoadingBotWallets, setIsLoadingBotWallets] = useState(false)
   const hasBotWallets = existingBotWallets && existingBotWallets.length === 5
   const [isMounted, setIsMounted] = useState(false)
@@ -511,28 +516,32 @@ export default function BumpBotDashboard() {
           // Only distribute if main wallet has credits
           // If no credits in main wallet but bot wallets have credits, continue anyway
           if (actualMainWalletCreditWei > BigInt(0)) {
-            setBumpLoadingState("Distributing credits to bot wallets (backend, no approval needed)...")
+            setBumpLoadingState("Distributing credits to bot wallets...")
             
-            // Use backend API for distribution (no user approval needed)
-            const distributeResponse = await fetch("/api/bot/distribute-credits-backend", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ 
-                userAddress: privySmartWalletAddress,
-                preferNativeEth: false // Use WETH
-              }),
-            })
-            
-            if (!distributeResponse.ok) {
-              const errorData = await distributeResponse.json()
-              console.warn("⚠️ Backend distribution failed:", errorData)
+            // Use frontend hook for distribution (using @privy-io/react-auth/smart-wallets)
+            try {
+              // Format bot wallets for the hook
+              const botWalletsForDistribution = existingBotWallets.map(wallet => ({
+                smartWalletAddress: wallet.smartWalletAddress,
+                ownerAddress: wallet.ownerAddress,
+                network: wallet.network,
+              }))
+              
+              await distributeCredits({
+                userAddress: privySmartWalletAddress as `0x${string}`,
+                botWallets: botWalletsForDistribution,
+                creditBalanceWei: actualMainWalletCreditWei,
+                preferNativeEth: false, // Use WETH
+              })
+              
+              console.log("✅ Credits distributed via frontend (using Privy Smart Wallet SDK)")
+              await new Promise(resolve => setTimeout(resolve, 2000)) // Wait for distribution to complete
+            } catch (distributeError: any) {
+              console.warn("⚠️ Frontend distribution failed:", distributeError)
               // Continue anyway if bot wallets have credits
               if (sufficientWallets === 0 && totalBotWethBalanceWei === BigInt(0)) {
-                throw new Error(errorData.error || "Failed to distribute credits. Please ensure you have credits in your main wallet or bot wallets.")
+                throw new Error(distributeError.message || "Failed to distribute credits. Please ensure you have credits in your main wallet or bot wallets.")
               }
-            } else {
-              console.log("✅ Credits distributed via backend (no approval needed)")
-              await new Promise(resolve => setTimeout(resolve, 2000)) // Wait for distribution to complete
             }
           } else {
             // No credits in main wallet, but check if bot wallets have credits

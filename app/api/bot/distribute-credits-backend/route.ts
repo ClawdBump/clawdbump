@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseServiceClient } from "@/lib/supabase"
-import { PrivyClient } from "@privy-io/node"
 import { createPublicClient, http, formatEther, formatUnits, getAddress, encodeFunctionData, type Address, type Hex } from "viem"
 import { base } from "viem/chains"
 
@@ -100,7 +99,7 @@ export async function POST(request: NextRequest) {
     const supabase = createSupabaseServiceClient()
     const normalizedUserAddress = userAddress.toLowerCase()
 
-    // Initialize Privy Client
+    // Privy credentials for Smart Wallet API
     const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID!
     const privyAppSecret = process.env.PRIVY_APP_SECRET!
 
@@ -110,8 +109,6 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
-
-    const privy = new PrivyClient(privyAppId, privyAppSecret)
 
     const publicClient = createPublicClient({
       chain: base,
@@ -138,12 +135,75 @@ export async function POST(request: NextRequest) {
     }
 
     const privyUserId = userMapping.privy_user_id
+    const mainWalletAddress = getAddress(userAddress)
+    
     console.log(`   → Privy User ID: ${privyUserId}`)
     console.log(`   → Smart Wallet Address: ${mainWalletAddress}`)
 
-    // Note: We don't need embedded wallet address for Privy Smart Wallet API
-    // Privy Smart Wallet API automatically handles signing from embedded wallet
-    // We only need privyUserId and Smart Wallet address
+    // Helper function to send transaction using Privy Smart Wallet SDK approach
+    // Similar to frontend: smartWalletClient.sendTransaction({ to, data, value })
+    // Uses Privy's internal Smart Wallet API
+    const sendSmartWalletTransaction = async (params: {
+      to?: Address
+      data?: Hex
+      value?: bigint
+      calls?: Array<{ to: Address; data: Hex; value: bigint }>
+    }): Promise<`0x${string}`> => {
+      // Privy Smart Wallet SDK internally uses this API endpoint
+      // This mimics the frontend smartWalletClient.sendTransaction() behavior
+      const privyApiUrl = `https://auth.privy.io/api/v1/users/${privyUserId}/smart-wallets/${mainWalletAddress}/user-operations`
+      
+      // Format similar to frontend Smart Wallet SDK
+      const body: any = {
+        network: "base",
+      }
+
+      // Support both single transaction and batch calls (like frontend)
+      if (params.calls && params.calls.length > 0) {
+        // Batch calls (like smartWalletClient.sendTransaction({ calls: [...] }))
+        body.calls = params.calls.map(call => ({
+          to: call.to,
+          data: call.data || '0x',
+          value: call.value.toString(),
+        }))
+      } else if (params.to) {
+        // Single transaction (like smartWalletClient.sendTransaction({ to, data, value }))
+        body.calls = [{
+          to: params.to,
+          data: params.data || '0x',
+          value: (params.value || BigInt(0)).toString(),
+        }]
+      } else {
+        throw new Error("Either 'to' or 'calls' must be provided")
+      }
+
+      const txResponse = await fetch(privyApiUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${privyAppSecret}`,
+          "privy-app-id": privyAppId,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      })
+
+      if (!txResponse.ok) {
+        const errorData = await txResponse.json().catch(() => ({ message: txResponse.statusText }))
+        console.error(`❌ Privy Smart Wallet API error:`, errorData)
+        throw new Error(`Privy Smart Wallet API error: ${errorData.message || txResponse.statusText}`)
+      }
+
+      const txData = await txResponse.json()
+      // Privy Smart Wallet returns UserOperation hash or transaction hash
+      const txHash = txData.txHash || txData.hash || txData.transactionHash || txData.userOpHash || txData.userOperationHash
+
+      if (!txHash) {
+        console.error(`❌ Privy Smart Wallet API response:`, txData)
+        throw new Error("No transaction hash returned from Privy Smart Wallet API")
+      }
+
+      return txHash as `0x${string}`
+    }
 
     // Step 1: Fetch bot wallets
     const { data: botWallets, error: walletsError } = await supabase
@@ -180,7 +240,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 3: Get main wallet on-chain balance
-    const mainWalletAddress = getAddress(userAddress)
+    // mainWalletAddress already defined above
     const nativeEthBalance = await publicClient.getBalance({
       address: mainWalletAddress,
     })
@@ -246,57 +306,19 @@ export async function POST(request: NextRequest) {
 
       // Execute transaction using Privy Smart Wallet SDK approach
       // Similar to frontend: smartWalletClient.sendTransaction({ to, data, value })
-      // Privy Smart Wallet SDK uses UserOperation (ERC-4337) for Smart Accounts
-      console.log(`   → Executing transaction via Privy Smart Wallet API...`)
+      console.log(`   → Executing transaction via Privy Smart Wallet SDK (backend)...`)
       
-      // Use Privy's Smart Wallet API endpoint
-      // This endpoint handles Smart Account transactions (UserOperations)
-      // Similar to frontend smartWalletClient.sendTransaction() but without user approval
-      const privyApiUrl = `https://auth.privy.io/api/v1/users/${privyUserId}/smart-wallets/${mainWalletAddress}/user-operations`
-      
-      const txResponse = await fetch(privyApiUrl, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${privyAppSecret}`,
-          "privy-app-id": privyAppId,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          network: "base",
-          calls: [{
-            to: MULTICALL3_ADDRESS,
-            data: multicallData,
-            value: totalAmount.toString(),
-          }],
-          // Privy Smart Wallet SDK automatically handles:
-          // - Signing from embedded wallet (EOA) - no user approval needed in backend
-          // - Creating UserOperation for Smart Account
-          // - Executing UserOperation on Smart Account
-          // - Gas sponsorship (if configured in Privy Dashboard)
-        }),
+      const txHash = await sendSmartWalletTransaction({
+        to: MULTICALL3_ADDRESS,
+        data: multicallData,
+        value: totalAmount,
       })
-
-      if (!txResponse.ok) {
-        const errorData = await txResponse.json().catch(() => ({ message: txResponse.statusText }))
-        console.error(`❌ Privy Smart Wallet API error:`, errorData)
-        throw new Error(`Privy Smart Wallet API error: ${errorData.message || txResponse.statusText}`)
-      }
-
-      const txData = await txResponse.json()
-      // Privy Smart Wallet returns UserOperation hash or transaction hash
-      const txHash = txData.txHash || txData.hash || txData.transactionHash || txData.userOpHash || txData.userOperationHash
-
-      if (!txHash) {
-        console.error(`❌ Privy Smart Wallet API response:`, txData)
-        throw new Error("No transaction hash returned from Privy Smart Wallet API")
-      }
 
       console.log(`   ✅ Distribution transaction submitted: ${txHash}`)
 
       // Wait for transaction confirmation
-      // For UserOperations, we wait for the actual transaction hash
       await publicClient.waitForTransactionReceipt({
-        hash: txHash as `0x${string}`,
+        hash: txHash,
         timeout: 120_000, // 2 minutes
       })
       
@@ -327,46 +349,19 @@ export async function POST(request: NextRequest) {
           functionName: "deposit",
         })
 
-        // Execute WETH deposit transaction using Privy Smart Wallet API
+        // Execute WETH deposit transaction using Privy Smart Wallet SDK
         // Similar to frontend: smartWalletClient.sendTransaction({ to: WETH_ADDRESS, value: wethNeeded, data: depositData })
-        const privyApiUrl = `https://auth.privy.io/api/v1/users/${privyUserId}/smart-wallets/${mainWalletAddress}/user-operations`
-        
-        const depositResponse = await fetch(privyApiUrl, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${privyAppSecret}`,
-            "privy-app-id": privyAppId,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            network: "base",
-            calls: [{
-              to: WETH_ADDRESS,
-              value: wethNeeded.toString(),
-              data: depositData,
-            }],
-          }),
+        const depositHash = await sendSmartWalletTransaction({
+          to: WETH_ADDRESS,
+          value: wethNeeded,
+          data: depositData,
         })
-
-        if (!depositResponse.ok) {
-          const errorData = await depositResponse.json().catch(() => ({ message: depositResponse.statusText }))
-          console.error(`❌ Privy Smart Wallet API error:`, errorData)
-          throw new Error(`Privy Smart Wallet API error: ${errorData.message || depositResponse.statusText}`)
-        }
-
-        const depositData_response = await depositResponse.json()
-        const depositHash = depositData_response.txHash || depositData_response.hash || depositData_response.transactionHash || depositData_response.userOpHash || depositData_response.userOperationHash
-
-        if (!depositHash) {
-          console.error(`❌ Privy Smart Wallet API response:`, depositData_response)
-          throw new Error("No transaction hash returned from Privy Smart Wallet API")
-        }
 
         console.log(`   ✅ WETH deposit submitted: ${depositHash}`)
 
         // Wait for transaction confirmation
         await publicClient.waitForTransactionReceipt({
-          hash: depositHash as `0x${string}`,
+          hash: depositHash,
           timeout: 120_000,
         })
         
@@ -396,46 +391,54 @@ export async function POST(request: NextRequest) {
         args: [transferCalls],
       })
 
-      // Execute WETH transfer transaction using Privy Smart Wallet API
+      // Execute WETH transfer transaction using Privy Smart Wallet SDK
       // Similar to frontend: smartWalletClient.sendTransaction({ to: MULTICALL3_ADDRESS, data: multicallData, value: 0 })
-      const privyApiUrl = `https://auth.privy.io/api/v1/users/${privyUserId}/smart-wallets/${mainWalletAddress}/user-operations`
+      // Or batch: smartWalletClient.sendTransaction({ calls: [...] })
       
-      const transferResponse = await fetch(privyApiUrl, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${privyAppSecret}`,
-          "privy-app-id": privyAppId,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          network: "base",
-          calls: [{
-            to: MULTICALL3_ADDRESS,
-            data: multicallData,
-            value: "0",
-          }],
-        }),
-      })
-
-      if (!transferResponse.ok) {
-        const errorData = await transferResponse.json().catch(() => ({ message: transferResponse.statusText }))
-        console.error(`❌ Privy Smart Wallet API error:`, errorData)
-        throw new Error(`Privy Smart Wallet API error: ${errorData.message || transferResponse.statusText}`)
+      // Try batch first (like frontend)
+      console.log(`   → Attempting batch WETH transfer (like frontend)...`)
+      let transferHash: `0x${string}`
+      
+      try {
+        // Prepare batch calls (like frontend batch approach)
+        const batchCalls = botWallets.map((wallet, index) => {
+          const amount = index === 0 ? amountForFirstBot : amountPerBot
+          const transferData = encodeFunctionData({
+            abi: WETH_ABI,
+            functionName: "transfer",
+            args: [getAddress(wallet.smart_account_address), amount],
+          })
+          
+          return {
+            to: WETH_ADDRESS as Address,
+            data: transferData,
+            value: BigInt(0), // ERC20 transfer, value is 0
+          }
+        })
+        
+        // Use batch calls (like frontend: smartWalletClient.sendTransaction({ calls: [...] }))
+        transferHash = await sendSmartWalletTransaction({
+          calls: batchCalls,
+        })
+        
+        console.log(`   ✅ Batch WETH transfer submitted: ${transferHash}`)
+      } catch (batchError: any) {
+        console.warn(`   ⚠️ Batch transfer failed: ${batchError.message}`)
+        console.log(`   → Falling back to single Multicall3 transaction...`)
+        
+        // Fallback to single Multicall3 transaction
+        transferHash = await sendSmartWalletTransaction({
+          to: MULTICALL3_ADDRESS,
+          data: multicallData,
+          value: BigInt(0),
+        })
+        
+        console.log(`   ✅ WETH distribution (Multicall3) submitted: ${transferHash}`)
       }
-
-      const transferData_response = await transferResponse.json()
-      const transferHash = transferData_response.txHash || transferData_response.hash || transferData_response.transactionHash || transferData_response.userOpHash || transferData_response.userOperationHash
-
-      if (!transferHash) {
-        console.error(`❌ Privy Smart Wallet API response:`, transferData_response)
-        throw new Error("No transaction hash returned from Privy Smart Wallet API")
-      }
-
-      console.log(`   ✅ WETH distribution submitted: ${transferHash}`)
 
       // Wait for transaction confirmation
       await publicClient.waitForTransactionReceipt({
-        hash: transferHash as `0x${string}`,
+        hash: transferHash,
         timeout: 120_000,
       })
       
