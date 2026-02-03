@@ -6,8 +6,9 @@ import { Slider } from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog"
-import { Clock, Fuel, AlertCircle, DollarSign, Wallet, Copy, Check } from "lucide-react"
+import { Clock, Fuel, AlertCircle, DollarSign, Wallet, Copy, Check, RefreshCw } from "lucide-react"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
+import { useSyncBotBalances } from "@/hooks/use-sync-bot-balances"
 import { QRCodeSVG } from "qrcode.react"
 import { toast } from "sonner"
 
@@ -42,9 +43,26 @@ export function ConfigPanel({
   
   const displayCredit = creditData?.balanceUsd ?? credits
   
+  // Sync bot balances hook
+  const { syncBalances, isSyncing } = useSyncBotBalances()
+  
   // QR Code dialog state
   const [isQRDialogOpen, setIsQRDialogOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  
+  const handleSyncBalances = async () => {
+    if (!smartWalletAddress || smartWalletAddress === "0x000...000") {
+      toast.error("Wallet not connected")
+      return
+    }
+    
+    await syncBalances(smartWalletAddress)
+    
+    // Refetch credit balance after sync
+    if (onCreditUpdate) {
+      await onCreditUpdate()
+    }
+  }
   
   const handleCopyAddress = () => {
     if (smartWalletAddress && smartWalletAddress !== "0x000...000") {
@@ -201,6 +219,21 @@ export function ConfigPanel({
                 </div>
               </DialogContent>
             </Dialog>
+            
+            {/* Sync Balances Button */}
+            <Button 
+              className="w-full" 
+              size="sm"
+              variant="outline"
+              onClick={handleSyncBalances}
+              disabled={!smartWalletAddress || smartWalletAddress === "0x000...000" || isSyncing}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? "animate-spin" : ""}`} />
+              {isSyncing ? "Syncing..." : "Sync Bot Balances"}
+            </Button>
+            <p className="text-[10px] text-muted-foreground leading-tight text-center">
+              Sync all bot wallet credits with on-chain balance
+            </p>
           </div>
 
           {displayCredit === 0 && (
