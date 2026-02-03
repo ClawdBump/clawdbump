@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Copy, Check, Shield, RefreshCw } from "lucide-react"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
+import { useSyncBotBalances } from "@/hooks/use-sync-bot-balances"
 import { usePublicClient } from "wagmi"
 import { formatEther } from "viem"
 import { toast } from "sonner"
@@ -34,6 +35,9 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
     { enabled: isSmartAccountActive && smartWalletAddress !== "0x000...000" }
   )
 
+  // Sync bot balances hook
+  const { syncBalances, isSyncing } = useSyncBotBalances()
+
   // Use credit from database if available, otherwise fallback to prop
   const displayCredit = creditData?.balanceUsd ?? credits
 
@@ -45,6 +49,7 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
 
   /**
    * Fetch balance from blockchain (on-chain) and sync with database
+   * Also syncs all bot wallet credits with on-chain balance
    * This ensures credit balance reflects actual on-chain balance (Native ETH + WETH)
    */
   const handleRefreshBalance = async () => {
@@ -55,8 +60,17 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
     
     setIsRefreshing(true)
     try {
-      console.log("🔄 Fetching balance from blockchain...")
+      console.log("🔄 Fetching balance from blockchain and syncing bot wallets...")
       
+      // Step 1: Sync all bot wallet credits with on-chain balance
+      console.log("   → Syncing bot wallet credits...")
+      const syncResult = await syncBalances(smartWalletAddress)
+      
+      if (syncResult && syncResult.synced > 0) {
+        console.log(`   ✅ Synced ${syncResult.synced} bot wallet(s)`)
+      }
+      
+      // Step 2: Fetch main wallet balance from blockchain
       // WETH Contract on Base
       const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
       const WETH_ABI = [
@@ -97,7 +111,7 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
       
       console.log(`✅ On-chain balance: ${totalEth} ETH (${formatEther(nativeEthBalance)} Native + ${formatEther(wethBalance)} WETH)`)
       
-      // Sync with database if needed
+      // Step 3: Sync main wallet with database if needed
       try {
         const syncResponse = await fetch("/api/credit/add", {
           method: "POST",
@@ -111,30 +125,24 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
         const syncData = await syncResponse.json()
         
         if (syncResponse.ok && syncData.success) {
-          console.log("✅ Database synced with on-chain balance")
-          toast.success("Balance updated from blockchain", {
-            description: `${totalEth} ETH (${formatEther(nativeEthBalance)} Native + ${formatEther(wethBalance)} WETH)`,
-          })
-          
-          // Refetch credit from database
-          await refetchCredit()
+          console.log("✅ Main wallet database synced with on-chain balance")
         } else {
-          console.warn("Failed to sync database:", syncData.error)
-          toast.warning("Fetched from blockchain but failed to sync database", {
-            description: syncData.error || "Unknown error",
-          })
+          console.warn("Failed to sync main wallet database:", syncData.error)
         }
       } catch (syncError: any) {
-        console.error("Failed to sync with database:", syncError)
-        toast.warning("Fetched from blockchain but failed to sync database")
+        console.error("Failed to sync main wallet with database:", syncError)
       }
       
-      // Refetch from database to get updated balance
+      // Step 4: Refetch credit from database to get updated balance (main + bot wallets)
       await refetchCredit()
+      
+      toast.success("Balance updated!", {
+        description: `Main wallet: ${totalEth} ETH • ${syncResult?.synced || 0} bot wallet(s) synced`,
+      })
       
     } catch (error: any) {
       console.error("❌ Failed to refresh balance:", error)
-      toast.error("Failed to fetch balance from blockchain", {
+      toast.error("Failed to refresh balance", {
         description: error.message || "Unknown error",
       })
     } finally {
@@ -142,7 +150,7 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
     }
   }
 
-  const showSpinner = isLoadingCredit || isRefreshing
+  const showSpinner = isLoadingCredit || isRefreshing || isSyncing
 
   return (
     <Card className="border border-border bg-card p-4">
