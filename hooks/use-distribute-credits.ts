@@ -9,41 +9,7 @@ import { toast } from "sonner"
 // WETH Contract Address (Base Network)
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
 
-// Multicall3 Contract Address (Universal, deployed on all chains)
-const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11" as const
-
-// Multicall3 ABI for batching multiple calls in single transaction
-const MULTICALL3_ABI = [
-  {
-    inputs: [
-      {
-        components: [
-          { name: "target", type: "address" },
-          { name: "allowFailure", type: "bool" },
-          { name: "value", type: "uint256" },
-          { name: "callData", type: "bytes" },
-        ],
-        name: "calls",
-        type: "tuple[]",
-      },
-    ],
-    name: "aggregate3Value",
-    outputs: [
-      {
-        components: [
-          { name: "success", type: "bool" },
-          { name: "returnData", type: "bytes" },
-        ],
-        name: "returnData",
-        type: "tuple[]",
-      },
-    ],
-    stateMutability: "payable",
-    type: "function",
-  },
-] as const
-
-// WETH ABI for balance check, deposit and transfer
+// WETH ABI for deposit and transfer
 const WETH_ABI = [
   {
     inputs: [{ name: "account", type: "address" }],
@@ -81,7 +47,6 @@ interface DistributeCreditsParams {
   userAddress: Address
   botWallets: BotWallet[]
   creditBalanceWei: bigint
-  preferNativeEth?: boolean // If true, distribute Native ETH instead of WETH (default: false)
 }
 
 export function useDistributeCredits() {
@@ -107,8 +72,7 @@ export function useDistributeCredits() {
   const distribute = useCallback(async ({ 
     userAddress, 
     botWallets, 
-    creditBalanceWei,
-    preferNativeEth = false // Default: use WETH (legacy behavior)
+    creditBalanceWei 
   }: DistributeCreditsParams) => {
     reset()
     setIsPending(true)
@@ -116,10 +80,6 @@ export function useDistributeCredits() {
     try {
       if (!smartWalletClient || !privySmartWalletAddress) {
         throw new Error("Smart Wallet client not found. Please login again.")
-      }
-
-      if (!publicClient) {
-        throw new Error("Public client not initialized. Please refresh the page.")
       }
 
       const smartWalletAddress = userAddress.toLowerCase() === privySmartWalletAddress.toLowerCase()
@@ -142,34 +102,6 @@ export function useDistributeCredits() {
       const nativeEthBalance = await publicClient.getBalance({ address: smartWalletAddress })
       
       // Get WETH balance
-      const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
-      const WETH_ABI = [
-        {
-          inputs: [{ name: "account", type: "address" }],
-          name: "balanceOf",
-          outputs: [{ name: "", type: "uint256" }],
-          stateMutability: "view",
-          type: "function",
-        },
-        {
-          inputs: [],
-          name: "deposit",
-          outputs: [],
-          stateMutability: "payable",
-          type: "function",
-        },
-        {
-          inputs: [
-            { name: "to", type: "address" },
-            { name: "amount", type: "uint256" },
-          ],
-          name: "transfer",
-          outputs: [{ name: "", type: "bool" }],
-          stateMutability: "nonpayable",
-          type: "function",
-        },
-      ] as const
-      
       let wethBalance = BigInt(0)
       try {
         wethBalance = await publicClient.readContract({
@@ -184,7 +116,7 @@ export function useDistributeCredits() {
 
       // Fetch credit balance from database (credit-balance API)
       // CRITICAL: This API returns WETH from database (user_credits.balance_wei)
-      // Credits are added when user deposits ETH/WETH to their Smart Account
+      // Only WETH from "Convert $BUMP to Credit" is counted, NOT direct WETH transfers
       console.log(`\n💰 Fetching credit balance from database (main wallet)...`)
       const creditResponse = await fetch("/api/credit-balance", {
         method: "POST",
@@ -193,23 +125,24 @@ export function useDistributeCredits() {
       })
       
       const creditData = await creditResponse.json()
-      // Use mainWalletCreditWei from database (ETH/WETH deposits to Smart Account)
+      // Use mainWalletCreditWei from database (only WETH from Convert $BUMP to Credit)
       const mainWalletCreditWei = BigInt(creditData.mainWalletCreditWei || "0")
 
       if (mainWalletCreditWei <= BigInt(0)) {
         throw new Error(
           "No credit available in main wallet.\n\n" +
-          "Please deposit ETH or WETH to your Privy Smart Account to add credits."
+          "Please convert $BUMP to Credit first.\n" +
+          "Direct WETH transfers to your wallet are NOT counted as credit."
         )
       }
       
-      console.log(`   → Credit from database: ${formatEther(mainWalletCreditWei)} WETH`)
-      console.log(`   → Credits are added when ETH/WETH is deposited to Smart Account`)
+      console.log(`   → Credit from database: ${formatEther(mainWalletCreditWei)} WETH (from Convert $BUMP to Credit)`)
+      console.log(`   → Note: Only WETH from Convert $BUMP to Credit is counted`)
 
       // =============================================
       // Calculate Distribution Amount
       // CRITICAL: Credit to distribute = WETH from database (user_credits.balance_wei)
-      // Credits are added when ETH/WETH is deposited to Smart Account
+      // This is ONLY WETH from "Convert $BUMP to Credit" transactions
       // We need to ensure we have enough WETH (or convert Native ETH to WETH)
       // =============================================
       setStatus("Calculating distribution amount...")
@@ -218,7 +151,7 @@ export function useDistributeCredits() {
       console.log(`   → Native ETH Balance (on-chain): ${formatEther(nativeEthBalance)} ETH`)
       console.log(`   → WETH Balance (on-chain): ${formatEther(wethBalance)} WETH`)
       console.log(`   → Total Available (ETH + WETH): ${formatEther(nativeEthBalance + wethBalance)} ETH`)
-      console.log(`   → Credit from database: ${formatEther(mainWalletCreditWei)} WETH`)
+      console.log(`   → Credit from database: ${formatEther(mainWalletCreditWei)} WETH (from Convert $BUMP to Credit)`)
 
       // Total available on-chain = Native ETH + WETH (for conversion if needed)
       const totalAvailable = nativeEthBalance + wethBalance
@@ -238,7 +171,7 @@ export function useDistributeCredits() {
         
         // Sync database credit to on-chain balance
         try {
-          const syncResponse = await fetch("/api/sync-credit", {
+          const syncResponse = await fetch("/api/credit/sync", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
@@ -284,7 +217,8 @@ export function useDistributeCredits() {
           `Insufficient balance for distribution.\n` +
           `Available: ${formatEther(totalAvailable)} ETH (${formatEther(nativeEthBalance)} Native + ${formatEther(wethBalance)} WETH)\n` +
           `Credit to distribute: ${formatEther(creditToDistribute)} WETH\n\n` +
-          `Please deposit more ETH or WETH to your Privy Smart Account.`
+          `Please convert $BUMP to Credit first.\n` +
+          `Direct WETH transfers are NOT counted as credit.`
         )
       }
       
@@ -317,40 +251,30 @@ export function useDistributeCredits() {
       const amountForFirstBot: bigint = amountPerBot + remainder
 
       console.log(`\n📦 Distribution per bot:`)
-      console.log(`   → Amount per bot: ${formatEther(amountPerBot)} ETH ${preferNativeEth ? '(Native ETH)' : '(will be converted to WETH)'}`)
+      console.log(`   → Amount per bot: ${formatEther(amountPerBot)} ETH (will be converted to WETH)`)
       if (remainder > BigInt(0)) {
         console.log(`   → First bot gets remainder: +${formatEther(remainder)} ETH`)
       }
 
       // =============================================
-      // STEP 1: Decide distribution strategy
-      // - If preferNativeEth = true: Distribute Native ETH directly (no conversion)
-      // - If preferNativeEth = false: Convert to WETH then distribute (legacy)
+      // STEP 1: Ensure we have enough WETH
+      // If we have WETH already, use it. If not, convert Native ETH to WETH.
+      // This ensures 100% gasless transactions and avoids Paymaster allowlist errors
       // =============================================
-      let depositTxHash: `0x${string}` | null = null
-      let distributeNativeEth = preferNativeEth
-      let distributeWeth = !preferNativeEth
+      setStatus("Preparing WETH...")
       
-      if (preferNativeEth) {
-        console.log(`\n💰 Distribution Strategy: NATIVE ETH`)
-        console.log(`   → Will distribute ${formatEther(creditToDistribute)} Native ETH directly`)
-        console.log(`   → No WETH conversion needed`)
-        console.log(`   → Bot wallets will receive Native ETH (Base chain ETH)`)
-        setStatus("Preparing Native ETH distribution...")
-      } else {
-        // Legacy behavior: Convert to WETH
-        setStatus("Preparing WETH...")
-        
-        console.log(`\n💱 Ensuring WETH balance...`)
-        console.log(`   → WETH Contract: ${WETH_ADDRESS}`)
-        console.log(`   → Credit to distribute: ${formatEther(creditToDistribute)} ETH`)
-        console.log(`   → Current WETH balance: ${formatEther(wethBalance)} WETH`)
-        console.log(`   → Strategy: Use existing WETH or convert Native ETH to WETH`)
-        
-        // Calculate how much WETH we need to convert from Native ETH
-        const wethNeeded = creditToDistribute > wethBalance ? creditToDistribute - wethBalance : BigInt(0)
-        
-        if (wethNeeded > BigInt(0)) {
+      console.log(`\n💱 Ensuring WETH balance...`)
+      console.log(`   → WETH Contract: ${WETH_ADDRESS}`)
+      console.log(`   → Credit to distribute: ${formatEther(creditToDistribute)} ETH`)
+      console.log(`   → Current WETH balance: ${formatEther(wethBalance)} WETH`)
+      console.log(`   → Strategy: Use existing WETH or convert Native ETH to WETH`)
+      
+      let depositTxHash: `0x${string}` | null = null
+      
+      // Calculate how much WETH we need to convert from Native ETH
+      const wethNeeded = creditToDistribute > wethBalance ? creditToDistribute - wethBalance : BigInt(0)
+      
+      if (wethNeeded > BigInt(0)) {
         if (nativeEthBalance < wethNeeded) {
           throw new Error(
             `Insufficient Native ETH for conversion.\n` +
@@ -395,302 +319,117 @@ export function useDistributeCredits() {
           console.error(`   ❌ WETH deposit failed:`, depositError.message)
           throw new Error(`Failed to deposit ETH to WETH: ${depositError.message}`)
         }
-        } else {
-          console.log(`   ✅ Already have enough WETH (${formatEther(wethBalance)} WETH)`)
-          console.log(`   → No conversion needed`)
-        }
-        
-        console.log(`   → Total WETH available for distribution: ${formatEther(creditToDistribute)} WETH`)
-      }
-
-      // =============================================
-      // STEP 2: Execute Transfers (Native ETH or WETH)
-      // - If preferNativeEth: Send Native ETH directly (value field)
-      // - If !preferNativeEth: Send WETH (ERC20 transfer)
-      // Privy automatically handles sponsorship via Dashboard configuration
-      // =============================================
-      const txHashes: `0x${string}`[] = []
-      
-      if (preferNativeEth) {
-        // =============== NATIVE ETH DISTRIBUTION ===============
-        setStatus("Distributing Native ETH...")
-        
-        console.log(`\n📤 Sending NATIVE ETH transfers...`)
-        console.log(`   → Smart Wallet: ${smartWalletAddress}`)
-        console.log(`   → Total transfers: ${botWallets.length}`)
-        console.log(`   → Strategy: Individual Native ETH transfers (no WETH conversion)`)
-        console.log(`   → Privy will automatically handle sponsorship via Dashboard configuration`)
-        
-        // Try batch transfer first
-        setStatus("Preparing batch Native ETH transfer...")
-        
-        console.log(`\n📤 Attempting BATCH Native ETH transfer...`)
-        let batchSuccess = false
-        let batchTxHash: `0x${string}` | null = null
-        
-        try {
-          // Prepare all Native ETH transfer calls for batch
-          const batchCalls = botWallets.map((wallet, index) => {
-            const amount: bigint = index === 0 ? amountForFirstBot : amountPerBot
-            const checksumAddress = getAddress(wallet.smartWalletAddress)
-            
-            return {
-              to: checksumAddress as Address,
-              value: amount, // Native ETH transfer uses value field
-              data: '0x' as Hex, // No data for Native ETH transfer
-            }
-          })
-          
-          console.log(`   → Executing batch transaction with ${batchCalls.length} Native ETH transfers...`)
-          
-          // Execute batch transaction
-          batchTxHash = await smartWalletClient.sendTransaction({
-            calls: batchCalls as any,
-          }) as `0x${string}`
-          
-          console.log(`   ✅ Batch Native ETH transfer submitted: ${batchTxHash}`)
-          batchSuccess = true
-          txHashes.push(batchTxHash)
-          
-        } catch (batchError: any) {
-          console.warn(`   ⚠️ Batch Native ETH transfer failed: ${batchError.message}`)
-          console.log(`   → Trying Multicall3 fallback...`)
-          batchSuccess = false
-        }
-        
-        // Try Multicall3 if Privy batch failed
-        if (!batchSuccess) {
-          console.log(`\n📦 Attempting Multicall3 batch (universal fallback)...`)
-          
-          try {
-            // Prepare Multicall3 calls
-            const multicallCalls = botWallets.map((wallet, index) => {
-              const amount: bigint = index === 0 ? amountForFirstBot : amountPerBot
-              const checksumAddress = getAddress(wallet.smartWalletAddress)
-              
-              return {
-                target: checksumAddress as Address,
-                allowFailure: false,
-                value: amount,
-                callData: '0x' as Hex,
-              }
-            })
-            
-            const multicallData = encodeFunctionData({
-              abi: MULTICALL3_ABI,
-              functionName: "aggregate3Value",
-              args: [multicallCalls],
-            })
-            
-            console.log(`   → Executing Multicall3 with ${multicallCalls.length} calls...`)
-            console.log(`   → Total value: ${formatEther(totalDistributionAmount)} ETH`)
-            
-            batchTxHash = await smartWalletClient.sendTransaction({
-              to: MULTICALL3_ADDRESS,
-              data: multicallData,
-              value: totalDistributionAmount,
-            }) as `0x${string}`
-            
-            console.log(`   ✅ Multicall3 batch successful: ${batchTxHash}`)
-            batchSuccess = true
-            txHashes.push(batchTxHash)
-            
-          } catch (multicallError: any) {
-            console.error(`   ❌ Multicall3 failed: ${multicallError.message}`)
-            console.log(`   → Falling back to individual Native ETH transfers...`)
-            batchSuccess = false
-          }
-        }
-        
-        // Final fallback to individual Native ETH transfers if both batch methods failed
-        if (!batchSuccess) {
-          console.log(`\n📤 Executing INDIVIDUAL Native ETH transfers (final fallback)...`)
-          console.log(`   ⚠️ This will require ${botWallets.length} separate confirmations`)
-          
-          toast.warning("Batch transaction not supported", {
-            description: `You'll need to confirm ${botWallets.length} transactions individually`,
-          })
-          
-          for (let i = 0; i < botWallets.length; i++) {
-            const wallet = botWallets[i]
-            const amount: bigint = i === 0 ? amountForFirstBot : amountPerBot
-            const checksumAddress = getAddress(wallet.smartWalletAddress)
-            
-            setStatus(`Sending Native ETH transfer ${i + 1}/${botWallets.length}...`)
-            
-            console.log(`\n   📤 Native ETH Transfer ${i + 1}/${botWallets.length}:`)
-            console.log(`      → To: ${checksumAddress}`)
-            console.log(`      → Amount: ${formatEther(amount)} ETH`)
-
-            try {
-              // Execute individual Native ETH transfer
-              const txHash = await smartWalletClient.sendTransaction({
-                to: checksumAddress as Address,
-                value: amount, // Native ETH
-                data: '0x' as Hex,
-              }) as `0x${string}`
-
-              txHashes.push(txHash)
-              console.log(`      ✅ Native ETH Transfer ${i + 1} submitted: ${txHash}`)
-              
-            } catch (transferError: any) {
-              console.error(`      ❌ Native ETH Transfer ${i + 1} failed:`, transferError.message)
-              throw transferError
-            }
-          }
-        }
       } else {
-        // =============== WETH DISTRIBUTION (Legacy) ===============
-        setStatus("Preparing WETH distribution...")
-        
-        console.log(`\n📤 Sending WETH transfers...`)
-        console.log(`   → Smart Wallet: ${smartWalletAddress}`)
-        console.log(`   → Total transfers: ${botWallets.length}`)
-        console.log(`   → Strategy: Individual WETH (ERC20) transfers`)
-        console.log(`   → Privy will automatically handle sponsorship via Dashboard configuration`)
+        console.log(`   ✅ Already have enough WETH (${formatEther(wethBalance)} WETH)`)
+        console.log(`   → No conversion needed`)
+      }
+      
+      console.log(`   → Total WETH available for distribution: ${formatEther(creditToDistribute)} WETH`)
 
-        // Try batch transaction first (faster, single transaction)
-        // If batch fails, fallback to individual transactions
-        setStatus("Preparing batch WETH transfer...")
+      // =============================================
+      // STEP 2: Execute Individual WETH Transfers (Like Withdraw Function)
+      // Privy automatically handles sponsorship via Dashboard configuration
+      // Use individual transactions to avoid batch allowlist restrictions
+      // =============================================
+      setStatus("Preparing WETH distribution...")
+      
+      console.log(`\n📤 Sending INDIVIDUAL WETH transfers...`)
+      console.log(`   → Smart Wallet: ${smartWalletAddress}`)
+      console.log(`   → Total transfers: ${botWallets.length}`)
+      console.log(`   → Strategy: Individual WETH (ERC20) transfers (like Withdraw $BUMP) to avoid batch allowlist restrictions`)
+      console.log(`   → Privy will automatically handle sponsorship via Dashboard configuration`)
+
+      const txHashes: `0x${string}`[] = []
+
+      // Try batch transaction first (faster, single transaction)
+      // If batch fails, fallback to individual transactions
+      setStatus("Preparing batch WETH transfer...")
+      
+      console.log(`\n📤 Attempting BATCH WETH transfer (all transfers in one transaction)...`)
+      console.log(`   → Smart Wallet: ${smartWalletAddress}`)
+      console.log(`   → Total transfers: ${botWallets.length}`)
+      console.log(`   → Strategy: Batch all WETH transfers in single transaction (faster, no delay)`)
+      
+      let batchSuccess = false
+      let batchTxHash: `0x${string}` | null = null
+      
+      try {
+        // Prepare all transfer calls for batch
+        const batchCalls = botWallets.map((wallet, index) => {
+          const amount: bigint = index === 0 ? amountForFirstBot : amountPerBot
+          const checksumAddress = getAddress(wallet.smartWalletAddress)
+          
+          const transferData = encodeFunctionData({
+            abi: WETH_ABI,
+            functionName: "transfer",
+            args: [checksumAddress as Address, amount],
+          })
+          
+          return {
+            to: WETH_ADDRESS,
+            data: transferData,
+            value: BigInt(0), // ERC20 transfer, value is 0
+          }
+        })
         
-        console.log(`\n📤 Attempting BATCH WETH transfer (all transfers in one transaction)...`)
-        console.log(`   → Smart Wallet: ${smartWalletAddress}`)
-        console.log(`   → Total transfers: ${botWallets.length}`)
-        console.log(`   → Strategy: Batch all WETH transfers in single transaction (faster, no delay)`)
+        console.log(`   → Executing batch transaction with ${batchCalls.length} calls...`)
         
-        let batchSuccess = false
-        let batchTxHash: `0x${string}` | null = null
+        // Execute batch transaction
+        batchTxHash = await smartWalletClient.sendTransaction({
+          calls: batchCalls as any,
+        }) as `0x${string}`
         
-        try {
-          // Prepare all WETH transfer calls for batch
-          const batchCalls = botWallets.map((wallet, index) => {
-            const amount: bigint = index === 0 ? amountForFirstBot : amountPerBot
-            const checksumAddress = getAddress(wallet.smartWalletAddress)
-            
+        console.log(`   ✅ Batch transaction submitted: ${batchTxHash}`)
+        batchSuccess = true
+        txHashes.push(batchTxHash)
+        
+      } catch (batchError: any) {
+        console.warn(`   ⚠️ Batch transaction failed: ${batchError.message}`)
+        console.log(`   → Falling back to individual transactions...`)
+        batchSuccess = false
+      }
+      
+      // Fallback to individual transactions if batch failed
+      if (!batchSuccess) {
+        console.log(`\n📤 Executing INDIVIDUAL WETH transfers (fallback)...`)
+        
+        for (let i = 0; i < botWallets.length; i++) {
+          const wallet = botWallets[i]
+          const amount: bigint = i === 0 ? amountForFirstBot : amountPerBot
+          const checksumAddress = getAddress(wallet.smartWalletAddress)
+          
+          setStatus(`Sending WETH transfer ${i + 1}/${botWallets.length}...`)
+          
+          console.log(`\n   📤 WETH Transfer ${i + 1}/${botWallets.length}:`)
+          console.log(`      → To: ${checksumAddress}`)
+          console.log(`      → Amount: ${formatEther(amount)} WETH`)
+
+          try {
+            // Encode WETH transfer function call (WETH.transfer(address, uint256))
             const transferData = encodeFunctionData({
               abi: WETH_ABI,
               functionName: "transfer",
               args: [checksumAddress as Address, amount],
             })
-            
-            return {
+
+            // Execute individual WETH transfer (same pattern as Withdraw $BUMP)
+            // Privy automatically handles sponsorship via Dashboard configuration
+            const txHash = await smartWalletClient.sendTransaction({
               to: WETH_ADDRESS,
               data: transferData,
               value: BigInt(0), // ERC20 transfer, value is 0
-            }
-          })
-          
-          console.log(`   → Executing batch transaction with ${batchCalls.length} WETH transfers...`)
-          
-          // Execute batch transaction
-          batchTxHash = await smartWalletClient.sendTransaction({
-            calls: batchCalls as any,
-          }) as `0x${string}`
-          
-          console.log(`   ✅ Batch WETH transfer submitted: ${batchTxHash}`)
-          batchSuccess = true
-          txHashes.push(batchTxHash)
-          
-        } catch (batchError: any) {
-          console.warn(`   ⚠️ Batch WETH transfer failed: ${batchError.message}`)
-          console.log(`   → Trying Multicall3 fallback...`)
-          batchSuccess = false
-        }
-        
-        // Try Multicall3 if Privy batch failed
-        if (!batchSuccess) {
-          console.log(`\n📦 Attempting Multicall3 batch for WETH transfers...`)
-          
-          try {
-            // Prepare Multicall3 calls for WETH transfers
-            const multicallCalls = botWallets.map((wallet, index) => {
-              const amount: bigint = index === 0 ? amountForFirstBot : amountPerBot
-              const checksumAddress = getAddress(wallet.smartWalletAddress)
-              
-              const transferData = encodeFunctionData({
-                abi: WETH_ABI,
-                functionName: "transfer",
-                args: [checksumAddress as Address, amount],
-              })
-              
-              return {
-                target: WETH_ADDRESS,
-                allowFailure: false,
-                value: BigInt(0),
-                callData: transferData,
-              }
-            })
-            
-            const multicallData = encodeFunctionData({
-              abi: MULTICALL3_ABI,
-              functionName: "aggregate3Value",
-              args: [multicallCalls],
-            })
-            
-            console.log(`   → Executing Multicall3 with ${multicallCalls.length} WETH transfer calls...`)
-            
-            batchTxHash = await smartWalletClient.sendTransaction({
-              to: MULTICALL3_ADDRESS,
-              data: multicallData,
-              value: BigInt(0), // No ETH value for WETH transfers
             }) as `0x${string}`
+
+            txHashes.push(txHash)
+            console.log(`      ✅ Transaction ${i + 1} submitted: ${txHash}`)
             
-            console.log(`   ✅ Multicall3 WETH batch successful: ${batchTxHash}`)
-            batchSuccess = true
-            txHashes.push(batchTxHash)
-            
-          } catch (multicallError: any) {
-            console.error(`   ❌ Multicall3 WETH batch failed: ${multicallError.message}`)
-            console.log(`   → Falling back to individual WETH transfers...`)
-            batchSuccess = false
+            // No delay - removed as requested
+          } catch (transferError: any) {
+            console.error(`      ❌ Transfer ${i + 1} failed:`, transferError.message)
+            throw transferError // Re-throw to stop execution
           }
         }
-        
-        // Final fallback to individual WETH transfers if both batch methods failed
-        if (!batchSuccess) {
-          console.log(`\n📤 Executing INDIVIDUAL WETH transfers (final fallback)...`)
-          console.log(`   ⚠️ This will require ${botWallets.length} separate confirmations`)
-          
-          toast.warning("Batch transaction not supported", {
-            description: `You'll need to confirm ${botWallets.length} transactions individually`,
-          })
-          
-          for (let i = 0; i < botWallets.length; i++) {
-            const wallet = botWallets[i]
-            const amount: bigint = i === 0 ? amountForFirstBot : amountPerBot
-            const checksumAddress = getAddress(wallet.smartWalletAddress)
-            
-            setStatus(`Sending WETH transfer ${i + 1}/${botWallets.length}...`)
-            
-            console.log(`\n   📤 WETH Transfer ${i + 1}/${botWallets.length}:`)
-            console.log(`      → To: ${checksumAddress}`)
-            console.log(`      → Amount: ${formatEther(amount)} WETH`)
-
-            try {
-              // Encode WETH transfer function call (WETH.transfer(address, uint256))
-              const transferData = encodeFunctionData({
-                abi: WETH_ABI,
-                functionName: "transfer",
-                args: [checksumAddress as Address, amount],
-              })
-
-              // Execute individual WETH transfer
-              const txHash = await smartWalletClient.sendTransaction({
-                to: WETH_ADDRESS,
-                data: transferData,
-                value: BigInt(0), // ERC20 transfer, value is 0
-              }) as `0x${string}`
-
-              txHashes.push(txHash)
-              console.log(`      ✅ WETH Transfer ${i + 1} submitted: ${txHash}`)
-              
-            } catch (transferError: any) {
-              console.error(`      ❌ WETH Transfer ${i + 1} failed:`, transferError.message)
-              throw transferError
-            }
-          }
-        }
-      } // End of WETH distribution block
+      }
 
       // Use deposit transaction hash as primary (or first transfer if deposit failed)
       const txHash = depositTxHash || (txHashes.length > 0 ? txHashes[0] : null)
@@ -723,16 +462,15 @@ export function useDistributeCredits() {
       console.log(`   → Gas used: ${receipt.gasUsed.toString()}`)
 
       // Record distribution in database
-      // Note: Record as Native ETH or WETH depending on distribution strategy
+      // Note: We record as WETH balance, but display as "Credit" (1:1 with ETH)
       setStatus("Recording distribution...")
       
       const distributions = botWallets.map((wallet, index) => {
         const distAmount: bigint = index === 0 ? amountForFirstBot : amountPerBot
         return {
           botWalletAddress: wallet.smartWalletAddress,
-          amountWei: distAmount.toString(), // Total amount distributed
-          nativeEthAmountWei: preferNativeEth ? distAmount.toString() : "0", // Native ETH amount
-          wethAmountWei: !preferNativeEth ? distAmount.toString() : "0", // WETH amount
+          amountWei: distAmount.toString(), // Amount in wei (same value for ETH and WETH)
+          wethAmountWei: distAmount.toString(), // Explicitly record as WETH
         }
       })
 
@@ -753,29 +491,30 @@ export function useDistributeCredits() {
 
       // =============================================
       // CREDIT DEDUCTION LOGIC:
-      // When distributing from main wallet to bot wallets:
-      // 1. Native ETH or WETH is transferred on-chain (main → bot wallets)
-      // 2. bot_wallet_credits (native_eth_balance_wei or weth_balance_wei) is INCREASED
-      // 3. user_credits.balance_wei is DECREASED
+      // When distributing WETH from main wallet to bot wallets:
+      // 1. WETH is transferred on-chain (from main wallet to bot wallets)
+      // 2. bot_wallet_credits.weth_balance_wei is INCREASED (via record-distribution API)
+      // 3. user_credits.balance_wei is DECREASED (via record-distribution API)
       // 
       // This prevents double counting:
-      // - Before: user_credits = 1 ETH, bot_credits = 0 → Total = 1 ETH ✅
-      // - After: user_credits = 0, bot_credits = 1 ETH → Total = 1 ETH ✅
-      // - Without deduction: user_credits = 1, bot_credits = 1 → Total = 2 ETH ❌
+      // - Before: user_credits.balance_wei = 1 WETH, bot_wallet_credits = 0 WETH → Total = 1 WETH ✅
+      // - After distribute: user_credits.balance_wei = 0 WETH, bot_wallet_credits = 1 WETH → Total = 1 WETH ✅
+      // - Without deduction: user_credits.balance_wei = 1 WETH, bot_wallet_credits = 1 WETH → Total = 2 WETH ❌
       // 
-      // The record-distribution API handles both operations atomically
+      // The record-distribution API handles both operations atomically:
+      // - Adds to bot_wallet_credits.weth_balance_wei
+      // - Subtracts from user_credits.balance_wei
       // =============================================
-      const assetType = preferNativeEth ? "Native ETH" : "WETH"
       console.log(`\n💰 Credit distribution completed!`)
-      console.log(`   → ${assetType} transferred on-chain: ${formatEther(creditToDistribute)} ${assetType}`)
+      console.log(`   → WETH transferred on-chain: ${formatEther(creditToDistribute)} WETH`)
       console.log(`   → Database updated: Added to bot wallets, deducted from main wallet`)
       console.log(`   → Credit balance is now correctly distributed (no double counting)`)
 
       setIsSuccess(true)
       setStatus("Distribution completed!")
       
-      toast.success(`Successfully distributed ${assetType} credit to 5 bot wallets!`, {
-        description: `Total: ${formatEther(creditToDistribute)} ${assetType}`,
+      toast.success("Successfully distributed WETH credit to 5 bot wallets!", {
+        description: `Total: ${formatEther(creditToDistribute)} WETH (1:1 with ETH)`,
         action: {
           label: "View",
           onClick: () => window.open(`https://basescan.org/tx/${txHash}`, "_blank"),

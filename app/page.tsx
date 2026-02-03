@@ -531,7 +531,6 @@ export default function BumpBotDashboard() {
                 userAddress: privySmartWalletAddress as `0x${string}`,
                 botWallets: botWalletsForDistribution,
                 creditBalanceWei: actualMainWalletCreditWei,
-                preferNativeEth: false, // Use WETH
               })
               
               console.log("✅ Credits distributed via frontend (using Privy Smart Wallet SDK)")
