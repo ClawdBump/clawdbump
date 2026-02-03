@@ -212,7 +212,9 @@ export function getActivityIcon(action: string): string {
     case "credit_distributed":
       return "📥" // Receiving credits
     case "swap_completed":
+    case "swap_executed":
     case "swap_started":
+    case "swap_executing":
       return "🔄" // Swap
     case "swap_failed":
       return "❌" // Failed swap
@@ -249,6 +251,9 @@ export function getActionLabel(action: string): string {
     case "swap_started":
     case "swap_executing":
       return "Swap In Progress"
+    case "swap_executed":
+    case "swap_completed":
+      return "Swap Completed"
     case "swap_failed":
       return "Swap Failed"
     case "eth_sent":

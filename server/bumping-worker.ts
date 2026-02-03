@@ -320,14 +320,14 @@ async function executeSwap(
     const txHash = receipt.transactionHash || swapOp.hash || String(swapOp)
     console.log(`   ✅ [STEP 5/5] Swap executed! TX: ${txHash.substring(0, 10)}...`)
 
-    // Log to Supabase
+    // Log to Supabase (use bot_wallet_address for consistency)
     await supabase.from("bot_logs").insert({
       user_address: userAddress.toLowerCase(),
-      wallet_address: botWalletAddress,
+      bot_wallet_address: botWalletAddress.toLowerCase(),
       token_address: session.token_address,
       amount_wei: amountWei.toString(),
       action: "swap_executed",
-      message: `[Worker] Swapped ${formatEther(amountWei)} WETH`,
+      message: `[Worker] Swapped ${formatEther(amountWei)} WETH to Target Token`,
       status: "success",
       tx_hash: txHash,
     })
