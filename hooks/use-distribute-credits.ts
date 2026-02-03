@@ -9,6 +9,40 @@ import { toast } from "sonner"
 // WETH Contract Address (Base Network)
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
 
+// Multicall3 Contract Address (Universal, deployed on all chains)
+const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11" as const
+
+// Multicall3 ABI for batching multiple calls in single transaction
+const MULTICALL3_ABI = [
+  {
+    inputs: [
+      {
+        components: [
+          { name: "target", type: "address" },
+          { name: "allowFailure", type: "bool" },
+          { name: "value", type: "uint256" },
+          { name: "callData", type: "bytes" },
+        ],
+        name: "calls",
+        type: "tuple[]",
+      },
+    ],
+    name: "aggregate3Value",
+    outputs: [
+      {
+        components: [
+          { name: "success", type: "bool" },
+          { name: "returnData", type: "bytes" },
+        ],
+        name: "returnData",
+        type: "tuple[]",
+      },
+    ],
+    stateMutability: "payable",
+    type: "function",
+  },
+] as const
+
 // WETH ABI for balance check, deposit and transfer
 const WETH_ABI = [
   {
@@ -420,13 +454,62 @@ export function useDistributeCredits() {
           
         } catch (batchError: any) {
           console.warn(`   ⚠️ Batch Native ETH transfer failed: ${batchError.message}`)
-          console.log(`   → Falling back to individual Native ETH transfers...`)
+          console.log(`   → Trying Multicall3 fallback...`)
           batchSuccess = false
         }
         
-        // Fallback to individual Native ETH transfers if batch failed
+        // Try Multicall3 if Privy batch failed
         if (!batchSuccess) {
-          console.log(`\n📤 Executing INDIVIDUAL Native ETH transfers (fallback)...`)
+          console.log(`\n📦 Attempting Multicall3 batch (universal fallback)...`)
+          
+          try {
+            // Prepare Multicall3 calls
+            const multicallCalls = botWallets.map((wallet, index) => {
+              const amount: bigint = index === 0 ? amountForFirstBot : amountPerBot
+              const checksumAddress = getAddress(wallet.smartWalletAddress)
+              
+              return {
+                target: checksumAddress as Address,
+                allowFailure: false,
+                value: amount,
+                callData: '0x' as Hex,
+              }
+            })
+            
+            const multicallData = encodeFunctionData({
+              abi: MULTICALL3_ABI,
+              functionName: "aggregate3Value",
+              args: [multicallCalls],
+            })
+            
+            console.log(`   → Executing Multicall3 with ${multicallCalls.length} calls...`)
+            console.log(`   → Total value: ${formatEther(totalDistributionAmount)} ETH`)
+            
+            batchTxHash = await smartWalletClient.sendTransaction({
+              to: MULTICALL3_ADDRESS,
+              data: multicallData,
+              value: totalDistributionAmount,
+            }) as `0x${string}`
+            
+            console.log(`   ✅ Multicall3 batch successful: ${batchTxHash}`)
+            batchSuccess = true
+            txHashes.push(batchTxHash)
+            
+          } catch (multicallError: any) {
+            console.error(`   ❌ Multicall3 failed: ${multicallError.message}`)
+            console.log(`   → Falling back to individual Native ETH transfers...`)
+            batchSuccess = false
+          }
+        }
+        
+        // Final fallback to individual Native ETH transfers if both batch methods failed
+        if (!batchSuccess) {
+          console.log(`\n📤 Executing INDIVIDUAL Native ETH transfers (final fallback)...`)
+          console.log(`   ⚠️ This will require ${botWallets.length} separate confirmations`)
+          
+          toast.warning("Batch transaction not supported", {
+            description: `You'll need to confirm ${botWallets.length} transactions individually`,
+          })
           
           for (let i = 0; i < botWallets.length; i++) {
             const wallet = botWallets[i]
@@ -510,13 +593,67 @@ export function useDistributeCredits() {
           
         } catch (batchError: any) {
           console.warn(`   ⚠️ Batch WETH transfer failed: ${batchError.message}`)
-          console.log(`   → Falling back to individual WETH transfers...`)
+          console.log(`   → Trying Multicall3 fallback...`)
           batchSuccess = false
         }
         
-        // Fallback to individual WETH transfers if batch failed
+        // Try Multicall3 if Privy batch failed
         if (!batchSuccess) {
-          console.log(`\n📤 Executing INDIVIDUAL WETH transfers (fallback)...`)
+          console.log(`\n📦 Attempting Multicall3 batch for WETH transfers...`)
+          
+          try {
+            // Prepare Multicall3 calls for WETH transfers
+            const multicallCalls = botWallets.map((wallet, index) => {
+              const amount: bigint = index === 0 ? amountForFirstBot : amountPerBot
+              const checksumAddress = getAddress(wallet.smartWalletAddress)
+              
+              const transferData = encodeFunctionData({
+                abi: WETH_ABI,
+                functionName: "transfer",
+                args: [checksumAddress as Address, amount],
+              })
+              
+              return {
+                target: WETH_ADDRESS,
+                allowFailure: false,
+                value: BigInt(0),
+                callData: transferData,
+              }
+            })
+            
+            const multicallData = encodeFunctionData({
+              abi: MULTICALL3_ABI,
+              functionName: "aggregate3Value",
+              args: [multicallCalls],
+            })
+            
+            console.log(`   → Executing Multicall3 with ${multicallCalls.length} WETH transfer calls...`)
+            
+            batchTxHash = await smartWalletClient.sendTransaction({
+              to: MULTICALL3_ADDRESS,
+              data: multicallData,
+              value: BigInt(0), // No ETH value for WETH transfers
+            }) as `0x${string}`
+            
+            console.log(`   ✅ Multicall3 WETH batch successful: ${batchTxHash}`)
+            batchSuccess = true
+            txHashes.push(batchTxHash)
+            
+          } catch (multicallError: any) {
+            console.error(`   ❌ Multicall3 WETH batch failed: ${multicallError.message}`)
+            console.log(`   → Falling back to individual WETH transfers...`)
+            batchSuccess = false
+          }
+        }
+        
+        // Final fallback to individual WETH transfers if both batch methods failed
+        if (!batchSuccess) {
+          console.log(`\n📤 Executing INDIVIDUAL WETH transfers (final fallback)...`)
+          console.log(`   ⚠️ This will require ${botWallets.length} separate confirmations`)
+          
+          toast.warning("Batch transaction not supported", {
+            description: `You'll need to confirm ${botWallets.length} transactions individually`,
+          })
           
           for (let i = 0; i < botWallets.length; i++) {
             const wallet = botWallets[i]
