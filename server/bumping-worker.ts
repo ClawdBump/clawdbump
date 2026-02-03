@@ -612,6 +612,30 @@ async function startWorker() {
     // Batch update is deprecated but kept for compatibility
     setInterval(batchUpdateWethBalances, BATCH_UPDATE_INTERVAL_MS)
     
+    // Auto-sync bot wallet balances every 1 minute (silent - no logs)
+    console.log(`✅ Setting up auto-sync balances (every 60s)`)
+    setInterval(async () => {
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+        const syncUrl = new URL('/api/bot/auto-sync-balances', baseUrl).toString()
+        
+        const response = await fetch(syncUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}), // Sync all users
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          console.log(`🔄 [Auto-Sync] Synced ${data.synced} bot wallet(s)`)
+        } else {
+          console.warn(`⚠️ [Auto-Sync] Failed: ${response.statusText}`)
+        }
+      } catch (error: any) {
+        console.error(`❌ [Auto-Sync] Error: ${error.message}`)
+      }
+    }, 60 * 1000) // 1 minute
+    
     console.log("✅ Worker initialized successfully\n")
 }
 
