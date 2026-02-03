@@ -273,7 +273,7 @@ export async function POST(request: NextRequest) {
       // Log insufficient balance
       await supabase.from("bot_logs").insert({
         user_address: user_address.toLowerCase(),
-        wallet_address: smartAccountAddress,
+        bot_wallet_address: smartAccountAddress.toLowerCase(),
         token_address: token_address,
         amount_wei: onChainWethBalance.toString(),
         action: "swap_skipped",
@@ -336,7 +336,7 @@ export async function POST(request: NextRequest) {
 
         await supabase.from("bot_logs").insert({
           user_address: user_address.toLowerCase(),
-          wallet_address: smartAccountAddress,
+          bot_wallet_address: smartAccountAddress.toLowerCase(),
           token_address: token_address,
           amount_wei: "0",
           action: "session_stopped",
@@ -498,7 +498,7 @@ export async function POST(request: NextRequest) {
           // Log conversion
           await supabase.from("bot_logs").insert({
             user_address: user_address.toLowerCase(),
-            wallet_address: smartAccountAddress,
+            bot_wallet_address: smartAccountAddress.toLowerCase(),
             token_address: token_address,
             amount_wei: wethNeeded.toString(),
             action: "eth_to_weth_conversion",
@@ -514,7 +514,7 @@ export async function POST(request: NextRequest) {
           // Log error but continue - maybe we can still proceed with available WETH
           await supabase.from("bot_logs").insert({
             user_address: user_address.toLowerCase(),
-            wallet_address: smartAccountAddress,
+            bot_wallet_address: smartAccountAddress.toLowerCase(),
             token_address: token_address,
             amount_wei: wethNeeded.toString(),
             action: "eth_to_weth_conversion_failed",
@@ -562,7 +562,7 @@ export async function POST(request: NextRequest) {
 
             await supabase.from("bot_logs").insert({
               user_address: user_address.toLowerCase(),
-              wallet_address: smartAccountAddress,
+              bot_wallet_address: smartAccountAddress.toLowerCase(),
               token_address: token_address,
               amount_wei: "0",
               action: "session_stopped",
@@ -580,7 +580,7 @@ export async function POST(request: NextRequest) {
           
           await supabase.from("bot_logs").insert({
             user_address: user_address.toLowerCase(),
-            wallet_address: smartAccountAddress,
+            bot_wallet_address: smartAccountAddress.toLowerCase(),
             token_address: token_address,
             amount_wei: amountWei.toString(),
             action: "swap_skipped",
@@ -640,12 +640,12 @@ export async function POST(request: NextRequest) {
             })
             .eq("id", sessionId)
 
-          await supabase.from("bot_logs").insert({
-            user_address: user_address.toLowerCase(),
-            wallet_address: smartAccountAddress,
-            token_address: token_address,
-            amount_wei: "0",
-            action: "session_stopped",
+        await supabase.from("bot_logs").insert({
+          user_address: user_address.toLowerCase(),
+          bot_wallet_address: smartAccountAddress.toLowerCase(),
+          token_address: token_address,
+          amount_wei: "0",
+          action: "session_stopped",
             message: `[System] All 5 bot wallets have insufficient WETH balance for swap (not enough Native ETH to convert). Bumping session stopped automatically.`,
             status: "info",
             created_at: new Date().toISOString(),
@@ -660,7 +660,7 @@ export async function POST(request: NextRequest) {
         
         await supabase.from("bot_logs").insert({
           user_address: user_address.toLowerCase(),
-          wallet_address: smartAccountAddress,
+          bot_wallet_address: smartAccountAddress.toLowerCase(),
           token_address: token_address,
           amount_wei: amountWei.toString(),
           action: "swap_skipped",
@@ -829,7 +829,7 @@ export async function POST(request: NextRequest) {
       // Log error to database with request_id
       await supabase.from("bot_logs").insert({
         user_address: user_address.toLowerCase(),
-        wallet_address: smartAccountAddress,
+        bot_wallet_address: smartAccountAddress.toLowerCase(),
         token_address: token_address,
         amount_wei: amountWei.toString(),
         action: "swap_failed",
@@ -975,11 +975,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 10: Create swap log entry
-    const { data: logEntry, error: logError } = await supabase
+      const { data: logEntry, error: logError } = await supabase
       .from("bot_logs")
       .insert({
         user_address: user_address.toLowerCase(),
-        wallet_address: smartAccountAddress,
+        bot_wallet_address: smartAccountAddress.toLowerCase(),
         token_address: token_address,
         amount_wei: amountWei.toString(),
         action: "swap_executing",
@@ -1524,7 +1524,7 @@ export async function POST(request: NextRequest) {
 
       await supabase.from("bot_logs").insert({
         user_address: user_address.toLowerCase(),
-        wallet_address: smartAccountAddress,
+        bot_wallet_address: smartAccountAddress.toLowerCase(),
         token_address: token_address,
         amount_wei: remainingWethBalance.toString(),
         action: "balance_check",
@@ -1588,7 +1588,7 @@ export async function POST(request: NextRequest) {
 
         await supabase.from("bot_logs").insert({
           user_address: user_address.toLowerCase(),
-          wallet_address: smartAccountAddress,
+          bot_wallet_address: smartAccountAddress.toLowerCase(),
           token_address: token_address,
           amount_wei: "0",
           action: "session_stopped",
@@ -1692,12 +1692,12 @@ export async function POST(request: NextRequest) {
             })
             .eq("id", sessionId)
 
-          await supabase.from("bot_logs").insert({
-            user_address: user_address.toLowerCase(),
-            wallet_address: smartAccountAddress,
-            token_address: token_address,
-            amount_wei: "0",
-            action: "session_stopped",
+        await supabase.from("bot_logs").insert({
+          user_address: user_address.toLowerCase(),
+          bot_wallet_address: smartAccountAddress.toLowerCase(),
+          token_address: token_address,
+          amount_wei: "0",
+          action: "session_stopped",
             message: `[System] All 5 bot wallets have insufficient ON-CHAIN WETH balance after swap error. Bumping session stopped automatically.`,
             status: "info",
             created_at: new Date().toISOString(),

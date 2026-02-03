@@ -58,10 +58,10 @@ export async function POST(request: NextRequest) {
     
     console.log(`   → Main Wallet WETH (from DB): ${formatUnits(mainWalletCreditWei, 18)} WETH`)
 
-    // Fetch bot wallet credits from database
+    // Fetch bot wallet credits from database (Native ETH + WETH)
     const { data: botCreditsData, error: botCreditsError } = await supabase
       .from("bot_wallet_credits")
-      .select("weth_balance_wei")
+      .select("native_eth_balance_wei, weth_balance_wei")
       .eq("user_address", normalizedUserAddress)
 
     if (botCreditsError && botCreditsError.code !== "PGRST116") {
@@ -72,20 +72,31 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Calculate bot wallet credits (from database)
-    const botWalletCreditsWei = botCreditsData?.reduce((sum, record) => {
-      const amountWei = BigInt(record.weth_balance_wei || "0")
-      return sum + amountWei
-    }, BigInt(0)) || BigInt(0)
+    // Calculate bot wallet credits (Native ETH + WETH from database)
+    let botNativeEthWei = BigInt(0)
+    let botWethWei = BigInt(0)
     
-    console.log(`   → Bot Wallets WETH (from DB): ${formatUnits(botWalletCreditsWei, 18)} WETH`)
+    if (botCreditsData) {
+      for (const record of botCreditsData) {
+        botNativeEthWei += BigInt(record.native_eth_balance_wei || "0")
+        botWethWei += BigInt(record.weth_balance_wei || "0")
+      }
+    }
     
-    // Total credit = Main wallet WETH (from DB) + Bot wallets WETH (from DB)
+    const botWalletCreditsWei = botNativeEthWei + botWethWei
+    
+    console.log(`   → Bot Wallets Native ETH (from DB): ${formatUnits(botNativeEthWei, 18)} ETH`)
+    console.log(`   → Bot Wallets WETH (from DB): ${formatUnits(botWethWei, 18)} WETH`)
+    console.log(`   → Bot Wallets Total (from DB): ${formatUnits(botWalletCreditsWei, 18)} ETH`)
+    
+    // Total credit = Main wallet WETH (from DB) + Bot wallets (Native ETH + WETH from DB)
     const totalCreditWei = mainWalletCreditWei + botWalletCreditsWei
     const balanceWei = totalCreditWei.toString()
     const balanceEth = formatUnits(BigInt(balanceWei), 18)
     
-    console.log(`   → Total Credit: ${balanceEth} WETH (from database)`)
+    console.log(`   → Total Credit: ${balanceEth} ETH (from database)`)
+    console.log(`      = Main Wallet: ${formatUnits(mainWalletCreditWei, 18)} WETH`)
+    console.log(`      + Bot Wallets: ${formatUnits(botNativeEthWei, 18)} Native ETH + ${formatUnits(botWethWei, 18)} WETH`)
 
     return NextResponse.json({
       success: true,
@@ -93,10 +104,12 @@ export async function POST(request: NextRequest) {
       balanceEth,
       mainWalletCreditWei: mainWalletCreditWei.toString(),
       botWalletCreditsWei: botWalletCreditsWei.toString(),
+      botNativeEthWei: botNativeEthWei.toString(),
+      botWethWei: botWethWei.toString(),
       lastUpdated: userCreditData?.last_updated || new Date().toISOString(),
       debug: {
         source: "database",
-        note: "Credits from ETH/WETH deposits to Smart Account",
+        note: "Credits from ETH/WETH deposits to Smart Account (main wallet) + distributed to bot wallets (Native ETH + WETH)",
       },
     })
   } catch (error: any) {
