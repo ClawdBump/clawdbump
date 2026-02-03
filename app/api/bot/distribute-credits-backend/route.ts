@@ -139,32 +139,11 @@ export async function POST(request: NextRequest) {
 
     const privyUserId = userMapping.privy_user_id
     console.log(`   → Privy User ID: ${privyUserId}`)
+    console.log(`   → Smart Wallet Address: ${mainWalletAddress}`)
 
-    // Get user's embedded wallet (EOA) from Privy
-    // This is the EOA that owns the Privy Smart Account
-    console.log(`   → Getting user's embedded wallet from Privy...`)
-    let embeddedWalletAddress: Address
-    try {
-      const user = await privy.getUser(privyUserId)
-      
-      // Find embedded wallet (EOA) from linked accounts
-      const embeddedWallet = user.linkedAccounts?.find(
-        (account: any) => account.type === "wallet" && account.walletClientType === "privy"
-      )
-      
-      if (!embeddedWallet?.address) {
-        throw new Error("Embedded wallet not found for user")
-      }
-      
-      embeddedWalletAddress = getAddress(embeddedWallet.address)
-      console.log(`   ✅ Embedded wallet address: ${embeddedWalletAddress}`)
-    } catch (error: any) {
-      console.error(`   ❌ Error getting embedded wallet: ${error.message}`)
-      return NextResponse.json(
-        { error: `Failed to get user's embedded wallet: ${error.message}` },
-        { status: 500 }
-      )
-    }
+    // Note: We don't need embedded wallet address for Privy Smart Wallet API
+    // Privy Smart Wallet API automatically handles signing from embedded wallet
+    // We only need privyUserId and Smart Wallet address
 
     // Step 1: Fetch bot wallets
     const { data: botWallets, error: walletsError } = await supabase
