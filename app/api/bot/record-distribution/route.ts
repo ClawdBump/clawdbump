@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseServiceClient } from "@/lib/supabase"
+import { formatEther } from "viem"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
@@ -214,6 +215,38 @@ export async function POST(request: NextRequest) {
     console.log(`   → Added ${totalDistributedWei.toString()} wei to bot wallets`)
     console.log(`   → Deducted ${totalDistributedWei.toString()} wei from main wallet`)
     console.log(`   → Credit balance is now correctly distributed (no double counting)`)
+
+    // Log distribution activity for each bot wallet
+    for (const dist of distributions) {
+      const nativeEthAmount = BigInt(dist.nativeEthAmountWei || "0")
+      const wethAmount = BigInt(dist.wethAmountWei || "0")
+      const totalAmount = nativeEthAmount + wethAmount
+      
+      if (totalAmount > BigInt(0)) {
+        const nativeEthFormatted = nativeEthAmount > BigInt(0) ? formatEther(nativeEthAmount) : "0"
+        const wethFormatted = wethAmount > BigInt(0) ? formatEther(wethAmount) : "0"
+        
+        let message = "Received distribution from Main Wallet: "
+        if (nativeEthAmount > BigInt(0) && wethAmount > BigInt(0)) {
+          message += `${nativeEthFormatted} Native ETH + ${wethFormatted} WETH`
+        } else if (nativeEthAmount > BigInt(0)) {
+          message += `${nativeEthFormatted} Native ETH`
+        } else {
+          message += `${wethFormatted} WETH`
+        }
+        
+        await supabase.from("bot_logs").insert({
+          user_address: normalizedUserAddress,
+          bot_wallet_address: dist.botWalletAddress.toLowerCase(),
+          action: "credit_distributed",
+          message,
+          status: "success",
+          tx_hash: txHash,
+          amount_wei: totalAmount.toString(),
+          created_at: new Date().toISOString(),
+        })
+      }
+    }
 
     return NextResponse.json({
       success: true,

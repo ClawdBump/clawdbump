@@ -9,10 +9,12 @@ import type { RealtimeChannel } from "@supabase/supabase-js"
 interface BotLog {
   id: number
   user_address: string
-  wallet_address: string
+  bot_wallet_address: string | null
+  wallet_address?: string // Legacy field for backward compatibility
   tx_hash: string | null
-  token_address: string
-  amount_wei: string
+  token_address: string | null
+  amount_wei: string | null
+  action: string // Activity type (swap_completed, credit_distributed, etc.)
   status: "pending" | "success" | "failed"
   message: string | null
   error_details: any
@@ -202,13 +204,83 @@ export function useBotLogs({ userAddress, enabled = true, limit = 20 }: UseBotLo
  * Get wallet label from wallet address
  * Matches wallet address to index (0-4) to show "Bot Wallet #1", etc.
  */
+/**
+ * Get activity icon based on action type
+ */
+export function getActivityIcon(action: string): string {
+  switch (action) {
+    case "credit_distributed":
+      return "📥" // Receiving credits
+    case "swap_completed":
+    case "swap_started":
+      return "🔄" // Swap
+    case "swap_failed":
+      return "❌" // Failed swap
+    case "eth_sent":
+    case "weth_sent":
+      return "📤" // Sending
+    case "eth_received":
+    case "weth_received":
+      return "📥" // Receiving
+    case "weth_deposited":
+      return "💱" // Convert to WETH
+    case "weth_withdrawn":
+      return "💱" // Convert to ETH
+    case "token_sent":
+      return "📤"
+    case "token_received":
+      return "📥"
+    case "insufficient_balance":
+      return "⚠️"
+    default:
+      return "ℹ️" // Info
+  }
+}
+
+/**
+ * Get human-readable action label
+ */
+export function getActionLabel(action: string): string {
+  switch (action) {
+    case "credit_distributed":
+      return "Credit Distribution"
+    case "swap_completed":
+      return "Swap Completed"
+    case "swap_started":
+    case "swap_executing":
+      return "Swap In Progress"
+    case "swap_failed":
+      return "Swap Failed"
+    case "eth_sent":
+      return "ETH Sent"
+    case "weth_sent":
+      return "WETH Sent"
+    case "eth_received":
+      return "ETH Received"
+    case "weth_received":
+      return "WETH Received"
+    case "weth_deposited":
+      return "Converted to WETH"
+    case "weth_withdrawn":
+      return "Converted to ETH"
+    case "token_sent":
+      return "Token Sent"
+    case "token_received":
+      return "Token Received"
+    case "insufficient_balance":
+      return "Insufficient Balance"
+    default:
+      return "System Message"
+  }
+}
+
 export function getWalletLabel(
   walletAddress: string | null,
   botWallets: Array<{ smartWalletAddress: string; index: number }> | null
 ): string {
   // Handle null or undefined wallet address (system logs)
   if (!walletAddress) {
-    return "System"
+    return "Main Wallet"
   }
   
   if (!botWallets || botWallets.length === 0) {

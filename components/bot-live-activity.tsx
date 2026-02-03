@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Activity, ExternalLink, Loader2, Wallet } from "lucide-react"
-import { useBotLogs, getWalletLabel, formatRelativeTime } from "@/hooks/use-bot-logs"
+import { useBotLogs, getWalletLabel, formatRelativeTime, getActivityIcon, getActionLabel } from "@/hooks/use-bot-logs"
 import { useBotWallets } from "@/hooks/use-bot-wallets"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
 import { formatEther } from "viem"
@@ -180,17 +180,21 @@ export function BotLiveActivity({ userAddress, enabled = true, existingBotWallet
             {/* Invisible element at the start for auto-scroll target (log terbaru di atas) */}
             <div ref={logsStartRef} />
             {logs.map((log, index) => {
-              const walletLabel = getWalletLabel(log.wallet_address, safeBotWallets)
+              // Get wallet address (support both old and new column names)
+              const walletAddr = log.bot_wallet_address || log.wallet_address || null
+              const walletLabel = getWalletLabel(walletAddr, safeBotWallets)
+              
+              // Get activity icon and label
+              const activityIcon = getActivityIcon(log.action)
+              const actionLabel = getActionLabel(log.action)
+              
               // Handle empty or zero amount_wei
               const amountEth = log.amount_wei && BigInt(log.amount_wei) > BigInt(0)
                 ? formatEther(BigInt(log.amount_wei))
                 : "0"
               
-              // Format action text - use message from log (already formatted by backend)
-              // Backend formats: [Bot #1] Melakukan swap senilai $0.01 ke Target Token... [Lihat Transaksi]
-              // Or: [System] Mengirim 0.000003 ETH ($0.01) ke Bot #1... Berhasil
-              // Or: [System] Saldo Bot #1 tidak cukup ($ < 0.01). Bumping dihentikan.
-              const actionText = log.message || (amountEth !== "0" ? `Buying token for ${parseFloat(amountEth).toFixed(6)} ETH` : "System message")
+              // Format action text - use message from log or generate default
+              const actionText = log.message || `${actionLabel}: ${parseFloat(amountEth).toFixed(6)} ETH`
 
               return (
                 <div
@@ -201,30 +205,29 @@ export function BotLiveActivity({ userAddress, enabled = true, existingBotWallet
                   }}
                 >
                   <div className="flex flex-1 items-center gap-3 min-w-0">
-                    {/* Status Badge */}
-                    <Badge
-                      variant={
-                        log.status === "success"
-                          ? "default" // Green (default variant)
-                          : log.status === "failed"
-                            ? "destructive" // Red
-                            : "secondary" // Yellow/Orange (pending)
-                      }
-                      className="shrink-0"
-                    >
-                      {log.status === "success"
-                        ? "Success"
-                        : log.status === "failed"
-                          ? "Failed"
-                          : "Processing"}
-                    </Badge>
+                    {/* Activity Icon */}
+                    <div className="shrink-0 text-lg">
+                      {activityIcon}
+                    </div>
 
                     {/* Activity Info */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <p className="text-[10px] sm:text-xs font-medium text-foreground truncate">
-                          {walletLabel}
+                        <p className="text-[10px] sm:text-xs font-medium text-foreground">
+                          {actionLabel}
                         </p>
+                        <Badge
+                          variant={
+                            log.status === "success"
+                              ? "default"
+                              : log.status === "failed"
+                                ? "destructive"
+                                : "secondary"
+                          }
+                          className="shrink-0 text-[9px] px-1.5 py-0"
+                        >
+                          {log.status === "success" ? "✓" : log.status === "failed" ? "✗" : "..."}
+                        </Badge>
                         {log.tx_hash && (
                           <a
                             href={`https://basescan.org/tx/${log.tx_hash}`}
@@ -237,14 +240,12 @@ export function BotLiveActivity({ userAddress, enabled = true, existingBotWallet
                           </a>
                         )}
                       </div>
-                      <p className="text-[10px] sm:text-xs text-muted-foreground line-clamp-2 break-words">
+                      <p className="text-[10px] sm:text-xs text-muted-foreground">
+                        {walletLabel}
+                      </p>
+                      <p className="text-[10px] sm:text-xs text-muted-foreground line-clamp-2 break-words mt-0.5">
                         {actionText}
                       </p>
-                      {log.message && (
-                        <p className="mt-1 text-[10px] sm:text-xs text-muted-foreground italic line-clamp-2 break-words">
-                          {log.message}
-                        </p>
-                      )}
                     </div>
 
                     {/* Timestamp */}
