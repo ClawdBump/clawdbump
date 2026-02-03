@@ -484,8 +484,10 @@ export default function BumpBotDashboard() {
           }
         }
         
+        // Check if we need to distribute credits
+        // Only distribute if main wallet has credits AND bot wallets need more
         if (sufficientWallets < 5) {
-          setBumpLoadingState("Distributing credits to bot wallets...")
+          setBumpLoadingState("Checking main wallet balance...")
           
           let actualMainWalletCreditWei = BigInt(0)
           
@@ -498,7 +500,7 @@ export default function BumpBotDashboard() {
             
             if (balanceResponse.ok) {
               const balanceData = await balanceResponse.json()
-              actualMainWalletCreditWei = BigInt(balanceData.balanceWei || "0")
+              actualMainWalletCreditWei = BigInt(balanceData.mainWalletCreditWei || "0")
             } else {
               actualMainWalletCreditWei = creditData?.balanceWei ? BigInt(creditData.balanceWei) : BigInt(0)
             }
@@ -506,17 +508,39 @@ export default function BumpBotDashboard() {
             actualMainWalletCreditWei = creditData?.balanceWei ? BigInt(creditData.balanceWei) : BigInt(0)
           }
           
-          if (actualMainWalletCreditWei <= BigInt(0)) {
-            throw new Error("No credit available in main wallet. Please deposit ETH or WETH first.")
+          // Only distribute if main wallet has credits
+          // If no credits in main wallet but bot wallets have credits, continue anyway
+          if (actualMainWalletCreditWei > BigInt(0)) {
+            setBumpLoadingState("Distributing credits to bot wallets (backend, no approval needed)...")
+            
+            // Use backend API for distribution (no user approval needed)
+            const distributeResponse = await fetch("/api/bot/distribute-credits-backend", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ 
+                userAddress: privySmartWalletAddress,
+                preferNativeEth: false // Use WETH
+              }),
+            })
+            
+            if (!distributeResponse.ok) {
+              const errorData = await distributeResponse.json()
+              console.warn("⚠️ Backend distribution failed:", errorData)
+              // Continue anyway if bot wallets have credits
+              if (sufficientWallets === 0 && totalBotWethBalanceWei === BigInt(0)) {
+                throw new Error(errorData.error || "Failed to distribute credits. Please ensure you have credits in your main wallet or bot wallets.")
+              }
+            } else {
+              console.log("✅ Credits distributed via backend (no approval needed)")
+              await new Promise(resolve => setTimeout(resolve, 2000)) // Wait for distribution to complete
+            }
+          } else {
+            // No credits in main wallet, but check if bot wallets have credits
+            if (sufficientWallets === 0 && totalBotWethBalanceWei === BigInt(0)) {
+              throw new Error("No credit available in main wallet or bot wallets. Please deposit ETH or WETH first.")
+            }
+            console.log("ℹ️ No credits in main wallet, but bot wallets have credits. Continuing with existing bot wallet credits...")
           }
-          
-          await distributeCredits({
-            userAddress: privySmartWalletAddress as `0x${string}`,
-            botWallets: existingBotWallets,
-            creditBalanceWei: actualMainWalletCreditWei,
-          })
-          
-          await new Promise(resolve => setTimeout(resolve, 3000))
         }
         
         setBumpLoadingState("Starting Session...")
