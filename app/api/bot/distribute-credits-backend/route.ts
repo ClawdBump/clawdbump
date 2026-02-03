@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createSupabaseServiceClient } from "@/lib/supabase"
-import { CdpClient } from "@coinbase/cdp-sdk"
+import { PrivyClient } from "@privy-io/node"
 import { createPublicClient, http, formatEther, formatUnits, getAddress, encodeFunctionData, type Address, type Hex } from "viem"
 import { base } from "viem/chains"
 
@@ -100,21 +100,18 @@ export async function POST(request: NextRequest) {
     const supabase = createSupabaseServiceClient()
     const normalizedUserAddress = userAddress.toLowerCase()
 
-    // Initialize CDP Client
-    const cdpApiKeyId = process.env.CDP_API_KEY_ID!
-    const cdpApiKeySecret = process.env.CDP_API_KEY_SECRET!
+    // Initialize Privy Client
+    const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID!
+    const privyAppSecret = process.env.PRIVY_APP_SECRET!
 
-    if (!cdpApiKeyId || !cdpApiKeySecret) {
+    if (!privyAppId || !privyAppSecret) {
       return NextResponse.json(
-        { error: "CDP credentials not configured" },
+        { error: "Privy credentials not configured. Please set PRIVY_APP_SECRET in environment variables." },
         { status: 500 }
       )
     }
 
-    const cdp = new CdpClient({
-      apiKeyId: cdpApiKeyId,
-      apiKeySecret: cdpApiKeySecret,
-    })
+    const privy = new PrivyClient(privyAppId, privyAppSecret)
 
     const publicClient = createPublicClient({
       chain: base,
@@ -123,26 +120,51 @@ export async function POST(request: NextRequest) {
 
     console.log(`\n💰 [Backend] Distributing credits for ${normalizedUserAddress}...`)
 
-    // Get user's owner address (EOA) from database
-    // This should be stored when user logs in via Privy
+    // Get user's Privy user ID from database
     const { data: userMapping, error: userMappingError } = await supabase
       .from("telegram_user_mappings")
-      .select("owner_address")
+      .select("privy_user_id")
       .eq("wallet_address", normalizedUserAddress)
       .single()
 
-    if (userMappingError || !userMapping?.owner_address) {
+    if (userMappingError || !userMapping?.privy_user_id) {
       return NextResponse.json(
         { 
-          error: "Owner address not found in database. Please ensure user has logged in and owner address is stored.",
-          hint: "The owner address (EOA) should be stored in telegram_user_mappings.owner_address when user logs in via Privy."
+          error: "User not found in database. Please ensure user has logged in via Privy.",
+          hint: "The privy_user_id should be stored in telegram_user_mappings when user logs in via Privy."
         },
         { status: 404 }
       )
     }
 
-    const ownerAddress = getAddress(userMapping.owner_address)
-    console.log(`   → Owner address (EOA): ${ownerAddress}`)
+    const privyUserId = userMapping.privy_user_id
+    console.log(`   → Privy User ID: ${privyUserId}`)
+
+    // Get user's embedded wallet (EOA) from Privy
+    // This is the EOA that owns the Privy Smart Account
+    console.log(`   → Getting user's embedded wallet from Privy...`)
+    let embeddedWalletAddress: Address
+    try {
+      const user = await privy.getUser(privyUserId)
+      
+      // Find embedded wallet (EOA) from linked accounts
+      const embeddedWallet = user.linkedAccounts?.find(
+        (account: any) => account.type === "wallet" && account.walletClientType === "privy"
+      )
+      
+      if (!embeddedWallet?.address) {
+        throw new Error("Embedded wallet not found for user")
+      }
+      
+      embeddedWalletAddress = getAddress(embeddedWallet.address)
+      console.log(`   ✅ Embedded wallet address: ${embeddedWalletAddress}`)
+    } catch (error: any) {
+      console.error(`   ❌ Error getting embedded wallet: ${error.message}`)
+      return NextResponse.json(
+        { error: `Failed to get user's embedded wallet: ${error.message}` },
+        { status: 500 }
+      )
+    }
 
     // Step 1: Fetch bot wallets
     const { data: botWallets, error: walletsError } = await supabase
@@ -207,38 +229,10 @@ export async function POST(request: NextRequest) {
     console.log(`   → Per bot wallet: ${formatEther(amountPerBot)} ETH`)
     console.log(`   → First bot (with remainder): ${formatEther(amountForFirstBot)} ETH`)
 
-    // Step 5: Get Owner Account and Smart Account using CDP SDK
-    // We use the stored owner address (EOA) to execute transactions from the Smart Account
-    console.log(`   → Getting Owner Account and Smart Account from CDP SDK...`)
-    
-    let ownerAccount
-    let smartAccount
-    try {
-      ownerAccount = await cdp.evm.getAccount({
-        address: ownerAddress,
-      })
-
-      if (!ownerAccount) {
-        throw new Error("Failed to get Owner Account from CDP SDK")
-      }
-
-      smartAccount = await cdp.evm.getSmartAccount({
-        owner: ownerAccount,
-        address: mainWalletAddress,
-      })
-
-      if (!smartAccount) {
-        throw new Error("Failed to get Smart Account from CDP SDK")
-      }
-
-      console.log(`   ✅ Owner Account and Smart Account retrieved successfully`)
-    } catch (error: any) {
-      console.error(`   ❌ Error getting accounts: ${error.message}`)
-      return NextResponse.json(
-        { error: `Failed to get accounts from CDP SDK: ${error.message}` },
-        { status: 500 }
-      )
-    }
+    // Step 5: Use Privy SDK to sign and send transactions
+    // Privy SDK will handle signing from the embedded wallet (EOA)
+    // The Smart Account will execute the transaction automatically
+    console.log(`   → Using Privy SDK to sign transactions from embedded wallet...`)
 
     // Step 6: Distribute credits
     const distributions: Array<{
@@ -271,38 +265,56 @@ export async function POST(request: NextRequest) {
 
       const totalAmount = multicallCalls.reduce((sum, call) => sum + call.value, BigInt(0))
 
-      // Execute transaction using CDP SDK (no user approval needed)
-      console.log(`   → Executing transaction via CDP SDK...`)
+      // Execute transaction using Privy Smart Wallet SDK approach
+      // Since we're in backend, we use Privy's REST API to send transaction
+      // Privy will handle signing from embedded wallet and execution on Smart Account
+      console.log(`   → Executing transaction via Privy API...`)
       
-      const userOpHash = await (smartAccount as any).sendUserOperation({
-        network: "base",
-        calls: [{
+      // Use Privy's REST API endpoint for sending transactions
+      // This mimics the frontend smartWalletClient.sendTransaction() behavior
+      const privyApiUrl = `https://auth.privy.io/api/v1/users/${privyUserId}/wallets/${mainWalletAddress}/transactions`
+      
+      const txResponse = await fetch(privyApiUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${privyAppSecret}`,
+          "privy-app-id": privyAppId,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          network: "base",
           to: MULTICALL3_ADDRESS,
           data: multicallData,
-          value: totalAmount,
-        }],
-        isSponsored: true, // Gasless transaction
+          value: totalAmount.toString(),
+          // Privy will automatically handle:
+          // - Signing from embedded wallet (EOA)
+          // - Executing on Smart Account
+          // - Gas sponsorship (if configured)
+        }),
       })
 
-      const txHash = typeof userOpHash === 'string'
-        ? userOpHash
-        : (userOpHash?.hash || userOpHash?.userOpHash || String(userOpHash))
+      if (!txResponse.ok) {
+        const errorData = await txResponse.json().catch(() => ({ message: txResponse.statusText }))
+        console.error(`❌ Privy API error:`, errorData)
+        throw new Error(`Privy API error: ${errorData.message || txResponse.statusText}`)
+      }
+
+      const txData = await txResponse.json()
+      // Privy returns transaction hash in different formats
+      const txHash = txData.txHash || txData.hash || txData.transactionHash || txData.userOpHash
+
+      if (!txHash) {
+        console.error(`❌ Privy API response:`, txData)
+        throw new Error("No transaction hash returned from Privy API")
+      }
 
       console.log(`   ✅ Distribution transaction submitted: ${txHash}`)
 
       // Wait for transaction confirmation
-      if (typeof (smartAccount as any).waitForUserOperation === 'function') {
-        await (smartAccount as any).waitForUserOperation({
-          userOpHash: txHash,
-          network: "base",
-        })
-      } else {
-        // Fallback: wait using public client
-        await publicClient.waitForTransactionReceipt({
-          hash: txHash as `0x${string}`,
-          timeout: 120_000, // 2 minutes
-        })
-      }
+      await publicClient.waitForTransactionReceipt({
+        hash: txHash as `0x${string}`,
+        timeout: 120_000, // 2 minutes
+      })
       
       console.log(`   ✅ Transaction confirmed: ${txHash}`)
 
@@ -331,35 +343,46 @@ export async function POST(request: NextRequest) {
           functionName: "deposit",
         })
 
-        // Execute WETH deposit transaction using CDP SDK
-        const depositUserOpHash = await (smartAccount as any).sendUserOperation({
-          network: "base",
-          calls: [{
+        // Execute WETH deposit transaction using Privy API
+        // Similar to frontend: smartWalletClient.sendTransaction({ to: WETH_ADDRESS, value: wethNeeded, data: depositData })
+        const privyApiUrl = `https://auth.privy.io/api/v1/users/${privyUserId}/wallets/${mainWalletAddress}/transactions`
+        
+        const depositResponse = await fetch(privyApiUrl, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${privyAppSecret}`,
+            "privy-app-id": privyAppId,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            network: "base",
             to: WETH_ADDRESS,
-            value: wethNeeded,
+            value: wethNeeded.toString(),
             data: depositData,
-          }],
-          isSponsored: true,
+          }),
         })
 
-        const depositHash = typeof depositUserOpHash === 'string'
-          ? depositUserOpHash
-          : (depositUserOpHash?.hash || depositUserOpHash?.userOpHash || String(depositUserOpHash))
+        if (!depositResponse.ok) {
+          const errorData = await depositResponse.json().catch(() => ({ message: depositResponse.statusText }))
+          console.error(`❌ Privy API error:`, errorData)
+          throw new Error(`Privy API error: ${errorData.message || depositResponse.statusText}`)
+        }
+
+        const depositData_response = await depositResponse.json()
+        const depositHash = depositData_response.txHash || depositData_response.hash || depositData_response.transactionHash || depositData_response.userOpHash
+
+        if (!depositHash) {
+          console.error(`❌ Privy API response:`, depositData_response)
+          throw new Error("No transaction hash returned from Privy API")
+        }
 
         console.log(`   ✅ WETH deposit submitted: ${depositHash}`)
 
         // Wait for transaction confirmation
-        if (typeof (smartAccount as any).waitForUserOperation === 'function') {
-          await (smartAccount as any).waitForUserOperation({
-            userOpHash: depositHash,
-            network: "base",
-          })
-        } else {
-          await publicClient.waitForTransactionReceipt({
-            hash: depositHash as `0x${string}`,
-            timeout: 120_000,
-          })
-        }
+        await publicClient.waitForTransactionReceipt({
+          hash: depositHash as `0x${string}`,
+          timeout: 120_000,
+        })
         
         console.log(`   ✅ WETH deposit confirmed: ${depositHash}`)
       }
@@ -387,35 +410,46 @@ export async function POST(request: NextRequest) {
         args: [transferCalls],
       })
 
-      // Execute WETH transfer transaction using CDP SDK
-      const transferUserOpHash = await (smartAccount as any).sendUserOperation({
-        network: "base",
-        calls: [{
+      // Execute WETH transfer transaction using Privy API
+      // Similar to frontend: smartWalletClient.sendTransaction({ to: MULTICALL3_ADDRESS, data: multicallData, value: 0 })
+      const privyApiUrl = `https://auth.privy.io/api/v1/users/${privyUserId}/wallets/${mainWalletAddress}/transactions`
+      
+      const transferResponse = await fetch(privyApiUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${privyAppSecret}`,
+          "privy-app-id": privyAppId,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          network: "base",
           to: MULTICALL3_ADDRESS,
           data: multicallData,
-          value: BigInt(0),
-        }],
-        isSponsored: true,
+          value: "0",
+        }),
       })
 
-      const transferHash = typeof transferUserOpHash === 'string'
-        ? transferUserOpHash
-        : (transferUserOpHash?.hash || transferUserOpHash?.userOpHash || String(transferUserOpHash))
+      if (!transferResponse.ok) {
+        const errorData = await transferResponse.json().catch(() => ({ message: transferResponse.statusText }))
+        console.error(`❌ Privy API error:`, errorData)
+        throw new Error(`Privy API error: ${errorData.message || transferResponse.statusText}`)
+      }
+
+      const transferData_response = await transferResponse.json()
+      const transferHash = transferData_response.txHash || transferData_response.hash || transferData_response.transactionHash || transferData_response.userOpHash
+
+      if (!transferHash) {
+        console.error(`❌ Privy API response:`, transferData_response)
+        throw new Error("No transaction hash returned from Privy API")
+      }
 
       console.log(`   ✅ WETH distribution submitted: ${transferHash}`)
 
       // Wait for transaction confirmation
-      if (typeof (smartAccount as any).waitForUserOperation === 'function') {
-        await (smartAccount as any).waitForUserOperation({
-          userOpHash: transferHash,
-          network: "base",
-        })
-      } else {
-        await publicClient.waitForTransactionReceipt({
-          hash: transferHash as `0x${string}`,
-          timeout: 120_000,
-        })
-      }
+      await publicClient.waitForTransactionReceipt({
+        hash: transferHash as `0x${string}`,
+        timeout: 120_000,
+      })
       
       console.log(`   ✅ WETH distribution confirmed: ${transferHash}`)
 
