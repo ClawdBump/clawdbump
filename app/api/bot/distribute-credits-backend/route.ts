@@ -123,6 +123,27 @@ export async function POST(request: NextRequest) {
 
     console.log(`\n💰 [Backend] Distributing credits for ${normalizedUserAddress}...`)
 
+    // Get user's owner address (EOA) from database
+    // This should be stored when user logs in via Privy
+    const { data: userMapping, error: userMappingError } = await supabase
+      .from("telegram_user_mappings")
+      .select("owner_address")
+      .eq("wallet_address", normalizedUserAddress)
+      .single()
+
+    if (userMappingError || !userMapping?.owner_address) {
+      return NextResponse.json(
+        { 
+          error: "Owner address not found in database. Please ensure user has logged in and owner address is stored.",
+          hint: "The owner address (EOA) should be stored in telegram_user_mappings.owner_address when user logs in via Privy."
+        },
+        { status: 404 }
+      )
+    }
+
+    const ownerAddress = getAddress(userMapping.owner_address)
+    console.log(`   → Owner address (EOA): ${ownerAddress}`)
+
     // Step 1: Fetch bot wallets
     const { data: botWallets, error: walletsError } = await supabase
       .from("wallets_data")
@@ -186,16 +207,35 @@ export async function POST(request: NextRequest) {
     console.log(`   → Per bot wallet: ${formatEther(amountPerBot)} ETH`)
     console.log(`   → First bot (with remainder): ${formatEther(amountForFirstBot)} ETH`)
 
-    // Step 5: Get Owner Account for main wallet
-    // Note: For main wallet, we need to use the user's Privy Smart Account
-    // This requires the owner address from the user's account
-    // For now, we'll use the first bot wallet's owner as a proxy
-    // In production, you'd store the main wallet's owner address separately
+    // Step 5: Get Owner Account and Smart Account using CDP SDK
+    // We use the stored owner address (EOA) to execute transactions from the Smart Account
+    console.log(`   → Getting Owner Account and Smart Account from CDP SDK...`)
+    
+    let ownerAccount
+    let smartAccount
+    try {
+      ownerAccount = await cdp.evm.getAccount({
+        address: ownerAddress,
+      })
 
-    const firstBotWallet = botWallets[0]
-    if (!firstBotWallet.owner_address) {
+      if (!ownerAccount) {
+        throw new Error("Failed to get Owner Account from CDP SDK")
+      }
+
+      smartAccount = await cdp.evm.getSmartAccount({
+        owner: ownerAccount,
+        address: mainWalletAddress,
+      })
+
+      if (!smartAccount) {
+        throw new Error("Failed to get Smart Account from CDP SDK")
+      }
+
+      console.log(`   ✅ Owner Account and Smart Account retrieved successfully`)
+    } catch (error: any) {
+      console.error(`   ❌ Error getting accounts: ${error.message}`)
       return NextResponse.json(
-        { error: "Owner address not found for bot wallets" },
+        { error: `Failed to get accounts from CDP SDK: ${error.message}` },
         { status: 500 }
       )
     }
@@ -229,27 +269,11 @@ export async function POST(request: NextRequest) {
         args: [multicallCalls],
       })
 
-      // Use first bot's owner to execute (as proxy for main wallet)
-      // In production, use main wallet's actual owner
-      const ownerAccount = await cdp.evm.getAccount({
-        address: firstBotWallet.owner_address as Address,
-      })
-
-      if (!ownerAccount) {
-        throw new Error("Failed to get Owner Account")
-      }
-
-      const smartAccount = await cdp.evm.getSmartAccount({
-        owner: ownerAccount,
-        address: mainWalletAddress,
-      })
-
-      if (!smartAccount) {
-        throw new Error("Failed to get Smart Account")
-      }
-
       const totalAmount = multicallCalls.reduce((sum, call) => sum + call.value, BigInt(0))
 
+      // Execute transaction using CDP SDK (no user approval needed)
+      console.log(`   → Executing transaction via CDP SDK...`)
+      
       const userOpHash = await (smartAccount as any).sendUserOperation({
         network: "base",
         calls: [{
@@ -257,7 +281,7 @@ export async function POST(request: NextRequest) {
           data: multicallData,
           value: totalAmount,
         }],
-        isSponsored: true,
+        isSponsored: true, // Gasless transaction
       })
 
       const txHash = typeof userOpHash === 'string'
@@ -266,13 +290,21 @@ export async function POST(request: NextRequest) {
 
       console.log(`   ✅ Distribution transaction submitted: ${txHash}`)
 
-      // Wait for confirmation
+      // Wait for transaction confirmation
       if (typeof (smartAccount as any).waitForUserOperation === 'function') {
         await (smartAccount as any).waitForUserOperation({
           userOpHash: txHash,
           network: "base",
         })
+      } else {
+        // Fallback: wait using public client
+        await publicClient.waitForTransactionReceipt({
+          hash: txHash as `0x${string}`,
+          timeout: 120_000, // 2 minutes
+        })
       }
+      
+      console.log(`   ✅ Transaction confirmed: ${txHash}`)
 
       // Record distributions
       for (let i = 0; i < botWallets.length; i++) {
@@ -294,28 +326,12 @@ export async function POST(request: NextRequest) {
         // Convert Native ETH to WETH
         console.log(`   → Converting ${formatEther(wethNeeded)} Native ETH to WETH...`)
 
-        const ownerAccount = await cdp.evm.getAccount({
-          address: firstBotWallet.owner_address as Address,
-        })
-
-        if (!ownerAccount) {
-          throw new Error("Failed to get Owner Account")
-        }
-
-        const smartAccount = await cdp.evm.getSmartAccount({
-          owner: ownerAccount,
-          address: mainWalletAddress,
-        })
-
-        if (!smartAccount) {
-          throw new Error("Failed to get Smart Account")
-        }
-
         const depositData = encodeFunctionData({
           abi: WETH_ABI,
           functionName: "deposit",
         })
 
+        // Execute WETH deposit transaction using CDP SDK
         const depositUserOpHash = await (smartAccount as any).sendUserOperation({
           network: "base",
           calls: [{
@@ -332,12 +348,20 @@ export async function POST(request: NextRequest) {
 
         console.log(`   ✅ WETH deposit submitted: ${depositHash}`)
 
+        // Wait for transaction confirmation
         if (typeof (smartAccount as any).waitForUserOperation === 'function') {
           await (smartAccount as any).waitForUserOperation({
             userOpHash: depositHash,
             network: "base",
           })
+        } else {
+          await publicClient.waitForTransactionReceipt({
+            hash: depositHash as `0x${string}`,
+            timeout: 120_000,
+          })
         }
+        
+        console.log(`   ✅ WETH deposit confirmed: ${depositHash}`)
       }
 
       // Distribute WETH to bot wallets
@@ -363,23 +387,7 @@ export async function POST(request: NextRequest) {
         args: [transferCalls],
       })
 
-      const ownerAccount = await cdp.evm.getAccount({
-        address: firstBotWallet.owner_address as Address,
-      })
-
-      if (!ownerAccount) {
-        throw new Error("Failed to get Owner Account")
-      }
-
-      const smartAccount = await cdp.evm.getSmartAccount({
-        owner: ownerAccount,
-        address: mainWalletAddress,
-      })
-
-      if (!smartAccount) {
-        throw new Error("Failed to get Smart Account")
-      }
-
+      // Execute WETH transfer transaction using CDP SDK
       const transferUserOpHash = await (smartAccount as any).sendUserOperation({
         network: "base",
         calls: [{
@@ -396,12 +404,20 @@ export async function POST(request: NextRequest) {
 
       console.log(`   ✅ WETH distribution submitted: ${transferHash}`)
 
+      // Wait for transaction confirmation
       if (typeof (smartAccount as any).waitForUserOperation === 'function') {
         await (smartAccount as any).waitForUserOperation({
           userOpHash: transferHash,
           network: "base",
         })
+      } else {
+        await publicClient.waitForTransactionReceipt({
+          hash: transferHash as `0x${string}`,
+          timeout: 120_000,
+        })
       }
+      
+      console.log(`   ✅ WETH distribution confirmed: ${transferHash}`)
 
       // Record distributions
       for (let i = 0; i < botWallets.length; i++) {
