@@ -45,11 +45,15 @@ export default function BumpBotDashboard() {
 
   useEffect(() => { setIsMounted(true) }, [])
 
+  const credits = useMemo(() => creditData?.balanceUsd || 0, [creditData])
+
+  // Sinkronisasi Smart Wallet Address
   useEffect(() => {
     const sw = wallets.find((w) => (w as any).type === 'smart_wallet' || w.walletClientType === 'smart_wallet')
     setPrivySmartWalletAddress(smartWalletClient?.account?.address || sw?.address || null)
   }, [wallets, smartWalletClient])
 
+  // Sinkronisasi status isActive dengan Database
   useEffect(() => {
     if (!isLoadingSession) {
       const isRunning = session?.status === "running"
@@ -58,10 +62,12 @@ export default function BumpBotDashboard() {
         if (session.token_address) setTargetTokenAddress(session.token_address)
         if (session.amount_usd) setBuyAmountUsd(session.amount_usd)
         if (session.interval_seconds) setIntervalSeconds(session.interval_seconds)
+        setIsTokenVerified(true) // Otomatis verifikasi jika session sudah jalan
       }
     }
   }, [session, isLoadingSession])
 
+  // Fungsi Internal: Generate atau Get 5 Bot Wallets
   const ensureBotWallets = async (userAddress: string) => {
     const response = await fetch("/api/bot/get-or-create-wallets", {
       method: "POST",
@@ -75,6 +81,7 @@ export default function BumpBotDashboard() {
     return data.wallets
   }
 
+  // Logic Utama: Start Bumping
   const handleToggle = useCallback(async () => {
     if (!isActive) {
       if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first")
@@ -150,11 +157,12 @@ export default function BumpBotDashboard() {
     }
   }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession])
 
-  if (!isMounted) return null
+  // Logic User Telegram
+  const telegramAccount = useMemo(() => user?.linkedAccounts?.find((a: any) => a.type === 'telegram'), [user])
+  const telegramUsername = (telegramAccount as any)?.username ? `@${(telegramAccount as any).username}` : (telegramAccount as any)?.first_name || null
+  const telegramPhoto = (telegramAccount as any)?.photo_url || null
 
-  // Telegram Meta
-  const telegramAccount = user?.linkedAccounts?.find((a: any) => a.type === 'telegram')
-  const username = (telegramAccount as any)?.username || (telegramAccount as any)?.first_name || "User"
+  if (!isMounted) return null
 
   return (
     <div className="min-h-screen bg-background p-4 pb-safe">
@@ -170,24 +178,36 @@ export default function BumpBotDashboard() {
                 <p className="text-xs text-muted-foreground">Built to Trend</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-               <div className={`h-2 w-2 rounded-full ${isActive ? "bg-green-500 animate-pulse" : "bg-muted"}`} />
-               <span className="text-xs font-mono">{isActive ? "LIVE" : "IDLE"}</span>
+            <div className="flex items-center gap-3">
+               {authenticated && (
+                 <div className="flex items-center gap-2 rounded-full bg-secondary/50 px-3 py-1 border border-border">
+                    {telegramPhoto ? (
+                      <img src={telegramPhoto} className="h-5 w-5 rounded-full object-cover" alt="avatar" />
+                    ) : (
+                      <User className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="text-xs font-medium truncate max-w-[100px]">
+                      {telegramUsername || "User"}
+                    </span>
+                 </div>
+               )}
+               {/* Indikator Dot Status */}
+               <div className={`h-3 w-3 rounded-full ${authenticated ? "bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-gray-400"}`} />
             </div>
           </div>
         </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="w-full grid grid-cols-3 bg-card border border-border">
-            <TabsTrigger value="control">Control</TabsTrigger>
-            <TabsTrigger value="activity">Activity</TabsTrigger>
-            <TabsTrigger value="manage">Bot</TabsTrigger>
+            <TabsTrigger value="control">Control Panel</TabsTrigger>
+            <TabsTrigger value="activity">Live Activity</TabsTrigger>
+            <TabsTrigger value="manage">Manage Bot</TabsTrigger>
           </TabsList>
 
           <TabsContent value="control" className="space-y-4 mt-4">
             <PriceChart tokenAddress={targetTokenAddress} />
             <WalletCard 
-              credits={creditData?.balanceUsd || 0} 
+              credits={credits} 
               walletAddress={privySmartWalletAddress}
               isSmartAccountActive={!!privySmartWalletAddress}
               ethPriceUsd={ethPriceUsd}
@@ -199,7 +219,7 @@ export default function BumpBotDashboard() {
               onVerifiedChange={(v, m) => { setIsTokenVerified(v); setTokenMetadata(m); }}
             />
             <ConfigPanel 
-              credits={creditData?.balanceUsd || 0} 
+              credits={credits} 
               smartWalletAddress={privySmartWalletAddress}
               buyAmountUsd={buyAmountUsd}
               onBuyAmountChange={setBuyAmountUsd}
@@ -210,10 +230,10 @@ export default function BumpBotDashboard() {
             <ActionButton 
               isActive={isActive} 
               onToggle={handleToggle}
-              credits={creditData?.balanceUsd || 0}
+              credits={credits}
               isVerified={isTokenVerified}
               loadingState={bumpLoadingState}
-              hasBotWallets={true} 
+              hasBotWallets={true}
               overrideLabel={isActive ? "Stop Bumping" : "Start Bumping"}
             />
           </TabsContent>
@@ -229,4 +249,4 @@ export default function BumpBotDashboard() {
       </div>
     </div>
   )
-}
+    }
