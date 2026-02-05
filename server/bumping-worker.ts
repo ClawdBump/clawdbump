@@ -616,7 +616,7 @@ async function startWorker() {
     console.log(`✅ Setting up auto-sync balances (every 60s)`)
     setInterval(async () => {
       try {
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://clawdbump.vercel.app/'
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://clawdbump.vercel.app'
         const syncUrl = new URL('/api/bot/auto-sync-balances', baseUrl).toString()
         
         const response = await fetch(syncUrl, {
