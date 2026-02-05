@@ -14,7 +14,7 @@ import { User } from "lucide-react"
 import Image from "next/image"
 import { usePrivy, useWallets } from "@privy-io/react-auth"
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets"
-import { useAccount, usePublicClient, useWalletClient } from "wagmi"
+import { useAccount, usePublicClient } from "wagmi"
 import { isAddress } from "viem"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
 import { useBotSession } from "@/hooks/use-bot-session"
@@ -22,14 +22,10 @@ import { useDistributeCredits } from "@/hooks/use-distribute-credits"
 import { toast } from "sonner"
 
 export default function BumpBotDashboard() {
-  // --- Auth & Wallet Hooks ---
   const { ready: privyReady, user, authenticated, login } = usePrivy()
   const { wallets } = useWallets()
-  const { address: wagmiAddress } = useAccount()
-  const publicClient = usePublicClient()
   const { client: smartWalletClient } = useSmartWallets()
   
-  // --- App States ---
   const [privySmartWalletAddress, setPrivySmartWalletAddress] = useState<string | null>(null)
   const [targetTokenAddress, setTargetTokenAddress] = useState<string | null>(null)
   const [isTokenVerified, setIsTokenVerified] = useState(false)
@@ -40,30 +36,26 @@ export default function BumpBotDashboard() {
   const [bumpLoadingState, setBumpLoadingState] = useState<string | null>(null)
   const [ethPriceUsd, setEthPriceUsd] = useState<number>(3000)
   const [existingBotWallets, setExistingBotWallets] = useState<any[] | null>(null)
-  const [isLoadingBotWallets, setIsLoadingBotWallets] = useState(false)
   const [activeTab, setActiveTab] = useState("control")
   const [isMounted, setIsMounted] = useState(false)
 
-  const hasRestoredStateRef = useRef(false)
-
-  // --- Bot Session Hook (Single Source of Truth) ---
-  const { 
-    session, 
-    isLoading: isLoadingSession, 
-    startSession, 
-    stopSession,
-    refetch: refetchSession,
-  } = useBotSession(privySmartWalletAddress)
+  const { session, isLoading: isLoadingSession, startSession, stopSession } = useBotSession(privySmartWalletAddress)
+  const { data: creditData, refetch: refetchCredit } = useCreditBalance(privySmartWalletAddress, { enabled: !!privySmartWalletAddress })
+  const { distributeCredits } = useDistributeCredits()
 
   useEffect(() => { setIsMounted(true) }, [])
 
-  // 1. SINKRONISASI STATUS: Ikuti database, abaikan localStorage untuk 'isActive'
+  // Sinkronisasi Smart Wallet Address [cite: 14, 15]
+  useEffect(() => {
+    const sw = wallets.find((w) => (w as any).type === 'smart_wallet' || w.walletClientType === 'smart_wallet')
+    setPrivySmartWalletAddress(smartWalletClient?.account?.address || sw?.address || null)
+  }, [wallets, smartWalletClient])
+
+  // Sinkronisasi status isActive dengan Database [cite: 66, 67]
   useEffect(() => {
     if (!isLoadingSession) {
       const isRunning = session?.status === "running"
       setIsActive(isRunning)
-      
-      // Jika bot sedang jalan, kunci input agar sesuai dengan session di database
       if (isRunning && session) {
         if (session.token_address) setTargetTokenAddress(session.token_address)
         if (session.amount_usd) setBuyAmountUsd(session.amount_usd)
@@ -72,54 +64,69 @@ export default function BumpBotDashboard() {
     }
   }, [session, isLoadingSession])
 
-  // 2. RESTORE: Hanya untuk kenyamanan input (Amount, Interval, Token)
-  useEffect(() => {
-    if (typeof window === "undefined" || !privySmartWalletAddress || hasRestoredStateRef.current) return
-    
-    try {
-      const storedAddress = localStorage.getItem(`targetTokenAddress_${privySmartWalletAddress}`)
-      if (storedAddress) setTargetTokenAddress(storedAddress)
-      
-      const storedBuyAmount = localStorage.getItem(`buyAmountUsd_${privySmartWalletAddress}`)
-      if (storedBuyAmount) setBuyAmountUsd(storedBuyAmount)
-      
-      const storedInterval = localStorage.getItem(`intervalSeconds_${privySmartWalletAddress}`)
-      if (storedInterval) setIntervalSeconds(parseInt(storedInterval, 10))
-      
-      hasRestoredStateRef.current = true
-    } catch (e) { console.error("Restore error:", e) }
-  }, [privySmartWalletAddress])
-
-  // 3. SAVE: Simpan input teks saja
-  useEffect(() => {
-    if (!privySmartWalletAddress) return
-    localStorage.setItem(`buyAmountUsd_${privySmartWalletAddress}`, buyAmountUsd)
-    localStorage.setItem(`intervalSeconds_${privySmartWalletAddress}`, intervalSeconds.toString())
-    if (targetTokenAddress) {
-      localStorage.setItem(`targetTokenAddress_${privySmartWalletAddress}`, targetTokenAddress)
+  // Fungsi Internal: Generate atau Get 5 Bot Wallets [cite: 31, 32]
+  const ensureBotWallets = async (userAddress: string) => {
+    const response = await fetch("/api/bot/get-or-create-wallets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userAddress: userAddress.toLowerCase() }),
+    })
+    const data = await response.json()
+    if (!response.ok || !data.wallets || data.wallets.length !== 5) {
+      throw new Error("Failed to prepare 5 bot wallets")
     }
-  }, [buyAmountUsd, intervalSeconds, targetTokenAddress, privySmartWalletAddress])
+    return data.wallets
+  }
 
-  // --- Wallet Detection Logic ---
-  const { data: creditData, refetch: refetchCredit } = useCreditBalance(privySmartWalletAddress, {
-    enabled: !!privySmartWalletAddress,
-  })
-  const credits = creditData?.balanceUsd || 0
-  const { distributeCredits } = useDistributeCredits()
-  
-  useEffect(() => {
-    const smartWallet = wallets.find((w) => (w as any).type === 'smart_wallet' || w.walletClientType === 'smart_wallet')
-    const detectedAddress = smartWalletClient?.account?.address || smartWallet?.address || null
-    setPrivySmartWalletAddress(detectedAddress)
-  }, [wallets, smartWalletClient])
-
-  // --- Main Action Handler ---
+  // Logic Utama: Start Bumping [cite: 37, 52, 59]
   const handleToggle = useCallback(async () => {
     if (!isActive) {
-      if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first")
-      
+      if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first") [cite: 37]
+      const amountUsdValue = parseFloat(buyAmountUsd)
+      if (isNaN(amountUsdValue) || amountUsdValue <= 0) return toast.error("Invalid amount") [cite: 38]
+
       try {
-        setBumpLoadingState("Starting...")
+        setBumpLoadingState("Checking Wallets...")
+        // 1. Pastikan 5 bot wallet sudah ada 
+        const walletsList = await ensureBotWallets(privySmartWalletAddress!)
+        setExistingBotWallets(walletsList)
+
+        // 2. Cek Balance tiap bot & Distribusi jika perlu [cite: 43, 47, 52]
+        setBumpLoadingState("Checking Balances...")
+        const priceRes = await fetch("/api/eth-price")
+        const priceData = await priceRes.json()
+        const currentEthPrice = priceData.price || 3000
+        const requiredWeiPerBot = BigInt(Math.floor((amountUsdValue / currentEthPrice) * 1e18))
+
+        let needsDistribution = false
+        for (const bot of walletsList) {
+          const balRes = await fetch("/api/bot/wallet-weth-balance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userAddress: privySmartWalletAddress, botWalletAddress: bot.smartWalletAddress }),
+          })
+          const balData = await balRes.json()
+          if (BigInt(balData.wethBalanceWei || "0") < requiredWeiPerBot) {
+            needsDistribution = true
+            break
+          }
+        }
+
+        if (needsDistribution) {
+          setBumpLoadingState("Distributing Credits...")
+          const mainCreditWei = creditData?.balanceWei ? BigInt(creditData.balanceWei) : BigInt(0)
+          if (mainCreditWei === BigInt(0)) throw new Error("Insufficient main credit for distribution") [cite: 58]
+
+          await distributeCredits({
+            userAddress: privySmartWalletAddress as `0x${string}`,
+            botWallets: walletsList,
+            creditBalanceWei: mainCreditWei,
+          })
+          await new Promise(r => setTimeout(r, 2000))
+        }
+
+        // 3. Start Session [cite: 59]
+        setBumpLoadingState("Launching Bot...")
         await startSession({
           userAddress: privySmartWalletAddress!,
           tokenAddress: targetTokenAddress as `0x${string}`,
@@ -127,34 +134,30 @@ export default function BumpBotDashboard() {
           intervalSeconds: intervalSeconds,
         })
         
+        // Trigger backend loop [cite: 60]
         fetch("/api/bot/continuous-swap", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userAddress: privySmartWalletAddress }),
         })
 
-        toast.success("Bot started!")
+        toast.success("Bumping Started!")
         setActiveTab("activity")
-      } catch (error: any) {
-        toast.error(error.message || "Failed to start")
+      } catch (e: any) {
+        toast.error(e.message || "Failed to start")
       } finally { setBumpLoadingState(null) }
     } else {
+      // Stop Bumping [cite: 63, 64]
       try {
         setBumpLoadingState("Stopping...")
         await stopSession()
-        toast.success("Bot stopped")
-      } catch (error: any) {
-        toast.error("Failed to stop session. Please try again.")
+        setIsActive(false)
+        toast.success("Bumping Stopped")
+      } catch (e) {
+        toast.error("Failed to stop")
       } finally { setBumpLoadingState(null) }
     }
-  }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, startSession, stopSession, privySmartWalletAddress])
-
-  // --- Telegram Metadata ---
-  const telegramAccount = user?.linkedAccounts?.find((account: any) => account.type === 'telegram')
-  const username = (telegramAccount as any)?.username ? `@${(telegramAccount as any).username}` : (telegramAccount as any)?.first_name || "User"
-  const userAvatar = (telegramAccount as any)?.photo_url || null
-
-  const isConnected = authenticated && !!privySmartWalletAddress
+  }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession])
 
   if (!isMounted) return null
 
@@ -164,23 +167,17 @@ export default function BumpBotDashboard() {
         <header className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="relative h-16 w-16 rounded-lg overflow-hidden">
+              <div className="relative h-16 w-16">
                 <Image src="/clawdbump-logo.png" alt="Logo" fill className="object-contain" />
               </div>
               <div>
-                <h1 className="font-mono text-base font-semibold text-foreground">ClawdBump</h1>
+                <h1 className="font-mono text-base font-semibold">ClawdBump</h1>
                 <p className="text-xs text-muted-foreground">Built to Trend</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
                <div className={`h-2 w-2 rounded-full ${isActive ? "bg-green-500 animate-pulse" : "bg-muted"}`} />
                <span className="text-xs font-mono">{isActive ? "LIVE" : "IDLE"}</span>
-               {isConnected && (
-                 <div className="flex items-center gap-2 border border-border bg-card/50 px-2 py-1 rounded-lg">
-                    {userAvatar && <img src={userAvatar} className="h-5 w-5 rounded-full" />}
-                    <span className="text-xs truncate max-w-[80px]">{username}</span>
-                 </div>
-               )}
             </div>
           </div>
         </header>
@@ -200,14 +197,12 @@ export default function BumpBotDashboard() {
               isSmartAccountActive={!!privySmartWalletAddress}
               ethPriceUsd={ethPriceUsd}
             />
+            {/* Input Lock saat isActive = true  */}
             <TokenInput 
               initialAddress={targetTokenAddress}
-              disabled={isActive}
+              disabled={isActive || !!bumpLoadingState}
               onAddressChange={setTargetTokenAddress}
-              onVerifiedChange={(isVerified, metadata) => {
-                setIsTokenVerified(isVerified)
-                setTokenMetadata(metadata)
-              }}
+              onVerifiedChange={(v, m) => { setIsTokenVerified(v); setTokenMetadata(m); }}
             />
             <ConfigPanel 
               credits={credits} 
@@ -216,14 +211,16 @@ export default function BumpBotDashboard() {
               onBuyAmountChange={setBuyAmountUsd}
               intervalSeconds={intervalSeconds}
               onIntervalChange={setIntervalSeconds}
-              isActive={isActive}
+              isActive={isActive || !!bumpLoadingState} 
             />
             <ActionButton 
               isActive={isActive} 
               onToggle={handleToggle}
               credits={credits}
               isVerified={isTokenVerified}
-              loadingState={bumpLoadingState || (isLoadingSession ? "Syncing..." : null)}
+              loadingState={bumpLoadingState}
+              hasBotWallets={true} // Selalu true karena handleToggle yang akan mengurus create
+              overrideLabel={isActive ? "Stop Bumping" : "Start Bumping"}
             />
           </TabsContent>
 
@@ -238,4 +235,4 @@ export default function BumpBotDashboard() {
       </div>
     </div>
   )
-        }
+}
