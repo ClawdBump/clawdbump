@@ -45,13 +45,11 @@ export default function BumpBotDashboard() {
 
   useEffect(() => { setIsMounted(true) }, [])
 
-  // Sinkronisasi Smart Wallet Address [cite: 14, 15]
   useEffect(() => {
     const sw = wallets.find((w) => (w as any).type === 'smart_wallet' || w.walletClientType === 'smart_wallet')
     setPrivySmartWalletAddress(smartWalletClient?.account?.address || sw?.address || null)
   }, [wallets, smartWalletClient])
 
-  // Sinkronisasi status isActive dengan Database [cite: 66, 67]
   useEffect(() => {
     if (!isLoadingSession) {
       const isRunning = session?.status === "running"
@@ -64,7 +62,6 @@ export default function BumpBotDashboard() {
     }
   }, [session, isLoadingSession])
 
-  // Fungsi Internal: Generate atau Get 5 Bot Wallets [cite: 31, 32]
   const ensureBotWallets = async (userAddress: string) => {
     const response = await fetch("/api/bot/get-or-create-wallets", {
       method: "POST",
@@ -78,20 +75,17 @@ export default function BumpBotDashboard() {
     return data.wallets
   }
 
-  // Logic Utama: Start Bumping [cite: 37, 52, 59]
   const handleToggle = useCallback(async () => {
     if (!isActive) {
-      if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first") [cite: 37]
+      if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first")
       const amountUsdValue = parseFloat(buyAmountUsd)
-      if (isNaN(amountUsdValue) || amountUsdValue <= 0) return toast.error("Invalid amount") [cite: 38]
+      if (isNaN(amountUsdValue) || amountUsdValue <= 0) return toast.error("Invalid amount")
 
       try {
         setBumpLoadingState("Checking Wallets...")
-        // 1. Pastikan 5 bot wallet sudah ada 
         const walletsList = await ensureBotWallets(privySmartWalletAddress!)
         setExistingBotWallets(walletsList)
 
-        // 2. Cek Balance tiap bot & Distribusi jika perlu [cite: 43, 47, 52]
         setBumpLoadingState("Checking Balances...")
         const priceRes = await fetch("/api/eth-price")
         const priceData = await priceRes.json()
@@ -115,7 +109,7 @@ export default function BumpBotDashboard() {
         if (needsDistribution) {
           setBumpLoadingState("Distributing Credits...")
           const mainCreditWei = creditData?.balanceWei ? BigInt(creditData.balanceWei) : BigInt(0)
-          if (mainCreditWei === BigInt(0)) throw new Error("Insufficient main credit for distribution") [cite: 58]
+          if (mainCreditWei === BigInt(0)) throw new Error("Insufficient main credit for distribution")
 
           await distributeCredits({
             userAddress: privySmartWalletAddress as `0x${string}`,
@@ -125,7 +119,6 @@ export default function BumpBotDashboard() {
           await new Promise(r => setTimeout(r, 2000))
         }
 
-        // 3. Start Session [cite: 59]
         setBumpLoadingState("Launching Bot...")
         await startSession({
           userAddress: privySmartWalletAddress!,
@@ -134,7 +127,6 @@ export default function BumpBotDashboard() {
           intervalSeconds: intervalSeconds,
         })
         
-        // Trigger backend loop [cite: 60]
         fetch("/api/bot/continuous-swap", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -147,7 +139,6 @@ export default function BumpBotDashboard() {
         toast.error(e.message || "Failed to start")
       } finally { setBumpLoadingState(null) }
     } else {
-      // Stop Bumping [cite: 63, 64]
       try {
         setBumpLoadingState("Stopping...")
         await stopSession()
@@ -160,6 +151,10 @@ export default function BumpBotDashboard() {
   }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession])
 
   if (!isMounted) return null
+
+  // Telegram Meta
+  const telegramAccount = user?.linkedAccounts?.find((a: any) => a.type === 'telegram')
+  const username = (telegramAccount as any)?.username || (telegramAccount as any)?.first_name || "User"
 
   return (
     <div className="min-h-screen bg-background p-4 pb-safe">
@@ -184,20 +179,19 @@ export default function BumpBotDashboard() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="w-full grid grid-cols-3 bg-card border border-border">
-            <TabsTrigger value="control">Control Panel</TabsTrigger>
-            <TabsTrigger value="activity">Live Activity</TabsTrigger>
-            <TabsTrigger value="manage">Manage Bot</TabsTrigger>
+            <TabsTrigger value="control">Control</TabsTrigger>
+            <TabsTrigger value="activity">Activity</TabsTrigger>
+            <TabsTrigger value="manage">Bot</TabsTrigger>
           </TabsList>
 
           <TabsContent value="control" className="space-y-4 mt-4">
             <PriceChart tokenAddress={targetTokenAddress} />
             <WalletCard 
-              credits={credits} 
+              credits={creditData?.balanceUsd || 0} 
               walletAddress={privySmartWalletAddress}
               isSmartAccountActive={!!privySmartWalletAddress}
               ethPriceUsd={ethPriceUsd}
             />
-            {/* Input Lock saat isActive = true  */}
             <TokenInput 
               initialAddress={targetTokenAddress}
               disabled={isActive || !!bumpLoadingState}
@@ -205,7 +199,7 @@ export default function BumpBotDashboard() {
               onVerifiedChange={(v, m) => { setIsTokenVerified(v); setTokenMetadata(m); }}
             />
             <ConfigPanel 
-              credits={credits} 
+              credits={creditData?.balanceUsd || 0} 
               smartWalletAddress={privySmartWalletAddress}
               buyAmountUsd={buyAmountUsd}
               onBuyAmountChange={setBuyAmountUsd}
@@ -216,10 +210,10 @@ export default function BumpBotDashboard() {
             <ActionButton 
               isActive={isActive} 
               onToggle={handleToggle}
-              credits={credits}
+              credits={creditData?.balanceUsd || 0}
               isVerified={isTokenVerified}
               loadingState={bumpLoadingState}
-              hasBotWallets={true} // Selalu true karena handleToggle yang akan mengurus create
+              hasBotWallets={true} 
               overrideLabel={isActive ? "Stop Bumping" : "Start Bumping"}
             />
           </TabsContent>
