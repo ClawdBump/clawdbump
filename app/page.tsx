@@ -11,7 +11,7 @@ import { BotLiveActivity } from "@/components/bot-live-activity"
 import { PriceChart } from "@/components/price-chart"
 import { ManageBot } from "@/components/manage-bot"
 import { User } from "lucide-react"
-import Image from "next/image"
+import Image from "image"
 import { usePrivy, useWallets } from "@privy-io/react-auth"
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets"
 import { useAccount, usePublicClient } from "wagmi"
@@ -52,6 +52,15 @@ export default function BumpBotDashboard() {
     const sw = wallets.find((w) => (w as any).type === 'smart_wallet' || w.walletClientType === 'smart_wallet')
     setPrivySmartWalletAddress(smartWalletClient?.account?.address || sw?.address || null)
   }, [wallets, smartWalletClient])
+
+  // Memuat bot wallets agar Tab Manage Bot berfungsi
+  useEffect(() => {
+    if (privySmartWalletAddress) {
+      ensureBotWallets(privySmartWalletAddress)
+        .then(wallets => setExistingBotWallets(wallets))
+        .catch(err => console.error("Failed to pre-fetch bot wallets", err))
+    }
+  }, [privySmartWalletAddress])
 
   // Sinkronisasi status isActive dengan Database
   useEffect(() => {
@@ -226,10 +235,6 @@ export default function BumpBotDashboard() {
             <ActionButton 
               isActive={isActive} 
               onToggle={handleToggle}
-              /* PERBAIKAN UTAMA: 
-                 Mengirimkan nilai dummy credits jika terverifikasi agar tombol aktif.
-                 Validasi saldo asli tetap terjadi di handleToggle (baris 115).
-              */
               credits={isTokenVerified && !isActive ? 999999 : credits}
               isVerified={isTokenVerified}
               loadingState={bumpLoadingState}
@@ -243,10 +248,13 @@ export default function BumpBotDashboard() {
           </TabsContent>
 
           <TabsContent value="manage" className="mt-4">
-            <ManageBot userAddress={privySmartWalletAddress} />
+            <ManageBot 
+              userAddress={privySmartWalletAddress} 
+              botWallets={existingBotWallets} 
+            />
           </TabsContent>
         </Tabs>
       </div>
     </div>
   )
-            }
+          }
