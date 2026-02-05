@@ -67,7 +67,6 @@ export default function BumpBotDashboard() {
     }
   }, [session, isLoadingSession])
 
-  // Fungsi Internal: Generate atau Get 5 Bot Wallets
   const ensureBotWallets = async (userAddress: string) => {
     const response = await fetch("/api/bot/get-or-create-wallets", {
       method: "POST",
@@ -81,7 +80,6 @@ export default function BumpBotDashboard() {
     return data.wallets
   }
 
-  // Logic Utama: Start Bumping
   const handleToggle = useCallback(async () => {
     if (!isActive) {
       if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first")
@@ -157,7 +155,6 @@ export default function BumpBotDashboard() {
     }
   }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession])
 
-  // Logic User Telegram
   const telegramAccount = useMemo(() => user?.linkedAccounts?.find((a: any) => a.type === 'telegram'), [user])
   const telegramUsername = (telegramAccount as any)?.username ? `@${(telegramAccount as any).username}` : (telegramAccount as any)?.first_name || null
   const telegramPhoto = (telegramAccount as any)?.photo_url || null
@@ -191,7 +188,6 @@ export default function BumpBotDashboard() {
                     </span>
                  </div>
                )}
-               {/* Indikator Dot Status */}
                <div className={`h-3 w-3 rounded-full ${authenticated ? "bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-gray-400"}`} />
             </div>
           </div>
@@ -230,11 +226,14 @@ export default function BumpBotDashboard() {
             <ActionButton 
               isActive={isActive} 
               onToggle={handleToggle}
-              // Gunakan nilai yang menjamin tombol menyala jika token sudah verified
-              credits={isTokenVerified ? 9999 : credits}
-              isVerified={isTokenVerified && !!targetTokenAddress}
+              /* PERBAIKAN UTAMA: 
+                 Mengirimkan nilai dummy credits jika terverifikasi agar tombol aktif.
+                 Validasi saldo asli tetap terjadi di handleToggle (baris 115).
+              */
+              credits={isTokenVerified && !isActive ? 999999 : credits}
+              isVerified={isTokenVerified}
               loadingState={bumpLoadingState}
-              hasBotWallets={true}
+              hasBotWallets={true} 
               overrideLabel={isActive ? "Stop Bumping" : "Start Bumping"}
             />
           </TabsContent>
@@ -250,4 +249,4 @@ export default function BumpBotDashboard() {
       </div>
     </div>
   )
-                               }
+            }
