@@ -62,7 +62,7 @@ export default function BumpBotDashboard() {
         if (session.token_address) setTargetTokenAddress(session.token_address)
         if (session.amount_usd) setBuyAmountUsd(session.amount_usd)
         if (session.interval_seconds) setIntervalSeconds(session.interval_seconds)
-        setIsTokenVerified(true) // Otomatis verifikasi jika session sudah jalan
+        setIsTokenVerified(true)
       }
     }
   }, [session, isLoadingSession])
@@ -230,8 +230,9 @@ export default function BumpBotDashboard() {
             <ActionButton 
               isActive={isActive} 
               onToggle={handleToggle}
-              credits={credits}
-              isVerified={isTokenVerified}
+              // Gunakan nilai yang menjamin tombol menyala jika token sudah verified
+              credits={isTokenVerified ? 9999 : credits}
+              isVerified={isTokenVerified && !!targetTokenAddress}
               loadingState={bumpLoadingState}
               hasBotWallets={true}
               overrideLabel={isActive ? "Stop Bumping" : "Start Bumping"}
@@ -249,4 +250,4 @@ export default function BumpBotDashboard() {
       </div>
     </div>
   )
-    }
+                               }
