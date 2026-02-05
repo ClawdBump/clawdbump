@@ -612,7 +612,7 @@ async function startWorker() {
     // Batch update is deprecated but kept for compatibility
     setInterval(batchUpdateWethBalances, BATCH_UPDATE_INTERVAL_MS)
     
-    // Auto-sync bot wallet balances every 1 minute (silent - no logs)
+    // Auto-sync bot wallet balances every 15 minute (silent - no logs)
     console.log(`✅ Setting up auto-sync balances (every 60s)`)
     setInterval(async () => {
       try {
@@ -634,7 +634,7 @@ async function startWorker() {
       } catch (error: any) {
         console.error(`❌ [Auto-Sync] Error: ${error.message}`)
       }
-    }, 60 * 1000) // 1 minute
+    },15 * 60 * 1000) // 15 minute
     
     console.log("✅ Worker initialized successfully\n")
 }
