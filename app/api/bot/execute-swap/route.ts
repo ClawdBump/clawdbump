@@ -778,5 +778,4 @@ export async function POST(request: NextRequest) {
         console.warn(`⚠️ Attempt ${attempt} failed:`, quoteError)
         
         // If "no Route matched" and we have more attempts, continue to retry
-        if (quoteError.message && 
-            (quoteError.message.includes("no Route matched")
+       if (quoteError.message.includes("no Route matched")
