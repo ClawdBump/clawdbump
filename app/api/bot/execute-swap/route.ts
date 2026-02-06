@@ -421,34 +421,7 @@ export async function POST(request: NextRequest) {
           if (!ownerAccount) {
             throw new Error("Failed to get Owner Account from CDP")
           }
-// ... (Bagian atas file tetap sama hingga baris 426)
 
-      // Use swap/allowance-holder/quote endpoint for ERC20 token swaps (WETH)
-      // Reference: https://0x.org/docs/upgrading/upgrading_to_swap_v2
-      
-      // TAMBAHAN LOGIKA NATIVE ETH:
-      // Cek jika saldo WETH on-chain kurang dari yang dibutuhkan, tapi Native ETH cukup
-      const useNativeEth = onChainWethBalance < amountWei && nativeEthBalance >= amountWei;
-      
-      const sellTokenAddress = useNativeEth 
-        ? "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" // Native ETH Address untuk 0x
-        : WETH_ADDRESS.toLowerCase();
-
-      // Pilih endpoint berdasarkan tipe token
-      const endpoint = useNativeEth
-        ? 'https://api.0x.org/swap/permit2/quote'
-        : 'https://api.0x.org/swap/allowance-holder/quote';
-
-      const quoteParams = new URLSearchParams({
-        chainId: "8453", 
-        sellToken: sellTokenAddress, 
-        buyToken: token_address.toLowerCase(), 
-        sellAmount: amountWei.toString(), 
-        taker: smartAccountAddress.toLowerCase(), 
-        slippageBps: attempt === 1 ? "500" : "1000", 
-      })
-
-          const quoteUrlObj = new URL(endpoint)
           const smartAccount = await cdp.evm.getSmartAccount({ 
             owner: ownerAccount,
             address: smartAccountAddress 
