@@ -767,15 +767,61 @@ export async function POST(request: NextRequest) {
         },
       })
 
-    if (!quoteResponse.ok) {
-        try {
-          quoteError = await quoteResponse.json()
-          requestId = quoteError.request_id || quoteError.requestId || null
-        } catch (e) {
-          quoteError = { message: quoteResponse.statusText }
-        }
-        
-        console.warn(`⚠️ Attempt ${attempt} failed:`, quoteError)
-        
-        // If "no Route matched" and we have more attempts, continue to retry
-       if (quoteError.message.includes("no Route matched")
+   if (!quoteResponse.ok) {
+        try {
+          quoteError = await quoteResponse.json()
+          requestId = quoteError.request_id || quoteError.requestId || null
+        } catch (e) {
+          quoteError = { message: quoteResponse.statusText }
+        }
+        
+        console.warn(`⚠️ Attempt ${attempt} failed:`, quoteError)
+        
+        // Cek kondisi retry
+        if (quoteError.message && quoteError.message.includes("no Route matched")) {
+          if (attempt < 3) {
+            console.log(`Retrying attempt ${attempt + 1} due to 'no Route matched' error...`);
+            continue;
+          }
+        }
+        
+        // Jika bukan error rute atau sudah attempt terakhir, lempar error
+        throw new Error(quoteError.message || "Failed to get swap quote");
+      }
+
+      // ... (Logika jika quoteResponse.ok ada di sini)
+
+    } catch (error: any) {
+      console.error(`❌ Swap execution error on attempt ${attempt}:`, error);
+
+      if (attempt === 3) {
+        await prisma.botSession.update({
+          where: { id: session.id },
+          data: {
+            status: "failed",
+            logs: {
+              create: {
+                level: "error",
+                message: `Swap failed after 3 attempts: ${error.message}`
+              }
+            }
+          }
+        });
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  } // End of retry loop
+
+  return NextResponse.json({ 
+    success: true, 
+    message: "Process finished successfully" 
+  });
+
+} catch (globalError: any) {
+  console.error("Critical Global Error:", globalError);
+  return NextResponse.json({ 
+    success: false, 
+    error: globalError.message || "Internal Server Error" 
+  }, { status: 500 });
+}
