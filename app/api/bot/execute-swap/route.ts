@@ -1,157 +1,178 @@
 import { NextRequest, NextResponse } from "next/server"
-import { formatEther, parseEther, isAddress, type Address, type Hex, createPublicClient, http, encodeFunctionData } from "viem"
-import { base } from "viem/chains"
-import { createSupabaseServiceClient } from "@/lib/supabase"
+import { createClient } from "@supabase/supabase-js"
 import { CdpClient } from "@coinbase/cdp-sdk"
+import { createPublicClient, http, formatEther, parseEther, type Address, type Hex, encodeFunctionData } from "viem"
+import { base } from "viem/chains"
 import "dotenv/config"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
-// Constants
+// --- Constants ---
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
 const NATIVE_ETH_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as const
 
 const WETH_ABI = [
-  {
-    inputs: [{ name: "account", type: "address" }],
-    name: "balanceOf",
-    outputs: [{ name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
+  { inputs: [{ name: "account", type: "address" }], name: "balanceOf", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" },
+  { inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], name: "allowance", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" },
+  { inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], name: "approve", outputs: [{ name: "", type: "bool" }], stateMutability: "nonpayable", type: "function" },
 ] as const
+
+// --- Clients Init ---
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!)
 
 const publicClient = createPublicClient({
   chain: base,
-  transport: http(process.env.NEXT_PUBLIC_BASE_RPC_URL),
+  transport: http(process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://mainnet.base.org"),
+})
+
+// Initialize CDP (Matching Worker Logic)
+const cdp = new CdpClient({
+  apiKeyId: process.env.CDP_API_KEY_ID!,
+  apiKeySecret: process.env.CDP_API_KEY_SECRET!,
+  walletSecret: process.env.CDP_WALLET_SECRET!,
 })
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { sessionId, walletIndex } = body as { sessionId: string; walletIndex: number }
+    const { sessionId, walletIndex } = body
 
-    if (!sessionId || walletIndex === undefined) {
-      return NextResponse.json({ error: "Missing fields" }, { status: 400 })
-    }
-
-    const supabase = createSupabaseServiceClient()
-
-    // 1. Fetch Session
-    const { data: session } = await supabase
+    // 1. Fetch Session Data
+    const { data: session, error: sessError } = await supabase
       .from("bot_sessions")
       .select("*")
       .eq("id", sessionId)
       .eq("status", "running")
       .single()
 
-    if (!session) return NextResponse.json({ error: "Session inactive" }, { status: 404 })
+    if (sessError || !session) return NextResponse.json({ error: "Session not active" }, { status: 404 })
 
-    const { user_address, token_address, amount_usd, wallet_rotation_index } = session
-
-    // 2. Fetch Wallets
-    const { data: botWallets } = await supabase
+    // 2. Fetch Wallet Data
+    const { data: botWallets, error: walletError } = await supabase
       .from("wallets_data")
       .select("*")
-      .eq("user_address", user_address.toLowerCase())
+      .eq("user_address", session.user_address.toLowerCase())
       .order("created_at", { ascending: true })
 
-    if (!botWallets || botWallets.length !== 5) return NextResponse.json({ error: "Wallets missing" }, { status: 404 })
+    if (walletError || !botWallets[walletIndex]) return NextResponse.json({ error: "Wallet not found" }, { status: 404 })
 
-    const botWallet = botWallets[walletIndex]
-    const smartAccountAddress = botWallet.smart_account_address as Address
-    const ownerAddress = botWallet.owner_address as Address
+    const currentWallet = botWallets[walletIndex]
+    const botWalletAddress = currentWallet.smart_account_address as Address
+    const ownerAddress = currentWallet.owner_address as Address
 
-    // 3. Initialize CDP
-    const cdp = new CdpClient()
+    // 3. Calculate Amount & Check Balances
+    const ethPriceRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd")
+    const ethPriceData = await ethPriceRes.json()
+    const ethPriceUsd = ethPriceData.ethereum?.usd || 3000
+    
+    const amountWei = parseEther((parseFloat(session.amount_usd) / ethPriceUsd).toString())
 
-    // 4. Balance Checks (Native + WETH)
-    const [nativeEthBalance, onChainWethBalance] = await Promise.all([
-      publicClient.getBalance({ address: smartAccountAddress }),
+    const [nativeBalance, wethBalance] = await Promise.all([
+      publicClient.getBalance({ address: botWalletAddress }),
       publicClient.readContract({
         address: WETH_ADDRESS,
         abi: WETH_ABI,
         functionName: "balanceOf",
-        args: [smartAccountAddress],
-      }),
+        args: [botWalletAddress],
+      })
     ])
 
-    // Get ETH Price
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-    const ethPriceRes = await fetch(new URL('/api/eth-price', baseUrl).toString())
-    const { price: ethPriceUsd } = await ethPriceRes.json()
+    // Determine Sell Token Path
+    let sellToken = WETH_ADDRESS as string
+    let isNative = false
 
-    const amountEthValue = parseFloat(amount_usd) / ethPriceUsd
-    const amountWei = BigInt(Math.floor(amountEthValue * 1e18))
-
-    // 5. Determine Sell Token Path
-    let sellToken = WETH_ADDRESS;
-    let isNative = false;
-
-    if (onChainWethBalance < amountWei) {
-      console.log("⚠️ WETH insufficient, checking Native ETH...")
-      if (nativeEthBalance >= amountWei) {
-        sellToken = NATIVE_ETH_ADDRESS;
-        isNative = true;
-        console.log("✅ Using Native ETH for swap")
+    if (wethBalance < amountWei) {
+      if (nativeBalance >= amountWei) {
+        sellToken = NATIVE_ETH_ADDRESS
+        isNative = true
       } else {
-        console.log("❌ Insufficient total balance. Skipping/Stopping.")
-        // [Logic for rotation/stop session goes here as per your original script]
-        return NextResponse.json({ skipped: true, reason: "Insufficient balance" })
+        return NextResponse.json({ error: "Insufficient balance in both ETH and WETH" }, { status: 400 })
       }
     }
 
-    // 6. Get 0x Quote
-    const zeroXApiKey = process.env.ZEROX_API_KEY!
+    // 4. Get 0x Quote
     const endpoint = isNative 
       ? "https://api.0x.org/swap/v2/quote" 
-      : "https://api.0x.org/swap/allowance-holder/quote";
+      : "https://api.0x.org/swap/allowance-holder/quote"
 
-    const params = new URLSearchParams({
+    const quoteParams = new URLSearchParams({
       chainId: "8453",
-      sellToken: sellToken.toLowerCase(),
-      buyToken: token_address.toLowerCase(),
+      sellToken: sellToken,
+      buyToken: session.token_address,
       sellAmount: amountWei.toString(),
-      taker: smartAccountAddress.toLowerCase(),
-      slippageBps: "500", // 5%
+      taker: botWalletAddress,
+      slippageBps: "1000",
     })
 
-    console.log(`📡 Fetching quote from: ${endpoint}`)
-    const quoteRes = await fetch(`${endpoint}?${params.toString()}`, {
-      headers: { "0x-api-key": zeroXApiKey, "0x-version": "v2" }
+    const quoteRes = await fetch(`${endpoint}?${quoteParams.toString()}`, {
+      headers: { "0x-api-key": process.env.ZEROX_API_KEY!, "0x-version": "v2" }
     })
-
     const quote = await quoteRes.json()
-    if (!quoteRes.ok) throw new Error(quote.reason || "Quote failed")
+    if (!quoteRes.ok) throw new Error(quote.message || "0x API Error")
 
-    // 7. Execute Transaction
+    const transaction = quote.transaction
+
+    // 5. Setup CDP Accounts
     const ownerAccount = await cdp.evm.getAccount({ address: ownerAddress })
-    const smartAccount = await cdp.evm.getSmartAccount({ owner: ownerAccount!, address: smartAccountAddress })
+    const smartAccount = await cdp.evm.getSmartAccount({ owner: ownerAccount!, address: botWalletAddress })
 
-    const call = {
-      to: quote.transaction.to as Address,
-      data: quote.transaction.data as Hex,
-      value: isNative ? BigInt(quote.transaction.value) : BigInt(0),
+    const calls: any[] = []
+
+    // 6. Handle Allowance for WETH
+    if (!isNative) {
+      const allowanceTarget = (quote.allowanceTarget || transaction.to) as Address
+      const currentAllowance = await publicClient.readContract({
+        address: WETH_ADDRESS,
+        abi: WETH_ABI,
+        functionName: "allowance",
+        args: [botWalletAddress, allowanceTarget],
+      })
+
+      if (currentAllowance < amountWei) {
+        calls.push({
+          to: WETH_ADDRESS,
+          data: encodeFunctionData({
+            abi: WETH_ABI,
+            functionName: "approve",
+            args: [allowanceTarget, BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")],
+          }),
+          value: BigInt(0),
+        })
+      }
     }
 
-    console.log(`🚀 Executing ${isNative ? 'Native ETH' : 'WETH'} swap...`)
-    const userOp = await (smartAccount as any).sendUserOperation({
+    // 7. Add Swap Call
+    calls.push({
+      to: transaction.to as Address,
+      data: transaction.data as Hex,
+      value: isNative ? BigInt(transaction.value) : BigInt(0),
+    })
+
+    // 8. Execute Operation
+    console.log(`🚀 Executing ${isNative ? 'Native ETH' : 'WETH'} swap via API...`)
+    const op = await (smartAccount as any).sendUserOperation({
       network: "base",
-      calls: [call],
+      calls: calls,
       isSponsored: true,
     })
 
-    // 8. Update DB & Logs
-    const txHash = typeof userOp === 'string' ? userOp : (userOp?.hash || "pending")
+    // Wait for result
+    const receipt = await (smartAccount as any).waitForUserOperation({ 
+      userOpHash: op.hash || op, 
+      network: "base" 
+    })
     
+    const txHash = receipt.transactionHash || op.hash || String(op)
+
+    // 9. Final Logs
     await supabase.from("bot_logs").insert({
-      user_address: user_address.toLowerCase(),
-      bot_wallet_address: smartAccountAddress.toLowerCase(),
-      token_address: token_address,
+      user_address: session.user_address.toLowerCase(),
+      bot_wallet_address: botWalletAddress.toLowerCase(),
+      token_address: session.token_address,
       amount_wei: amountWei.toString(),
-      action: isNative ? "native_eth_swap" : "weth_swap",
-      message: `Swapped ${formatEther(amountWei)} ${isNative ? 'ETH' : 'WETH'} for token`,
+      action: isNative ? "native_eth_swap_api" : "weth_swap_api",
+      message: `[API] Swapped ${formatEther(amountWei)} ${isNative ? 'ETH' : 'WETH'}`,
       status: "success",
       tx_hash: txHash,
     })
@@ -159,7 +180,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, txHash })
 
   } catch (error: any) {
-    console.error("❌ Swap Error:", error.message)
+    console.error("❌ API Swap Error:", error.message)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
