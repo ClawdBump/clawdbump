@@ -9,12 +9,14 @@ import { useSyncBotBalances } from "@/hooks/use-sync-bot-balances"
 import { usePublicClient } from "wagmi"
 import { formatEther } from "viem"
 import { toast } from "sonner"
+import { useClawdbumpTokenBalance } from "@/hooks/use-clawdbump-token-balance"
 
 interface WalletCardProps {
   fuelBalance?: number
   credits?: number
   walletAddress?: string | null
   isSmartAccountActive?: boolean
+  ethPriceUsd?: number
 }
 
 export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmartAccountActive = false }: WalletCardProps) {
@@ -40,6 +42,15 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
 
   // Use credit from database if available, otherwise fallback to prop
   const displayCredit = creditData?.balanceUsd ?? credits
+
+  // Fetch $CLAWDBUMP token balance from smart wallet
+  const {
+    data: clawdbumpBalance,
+    isLoading: isLoadingClawdbump,
+  } = useClawdbumpTokenBalance(
+    smartWalletAddress !== "0x000...000" ? smartWalletAddress : null,
+    { enabled: isSmartAccountActive && smartWalletAddress !== "0x000...000" }
+  )
 
   const handleCopy = () => {
     navigator.clipboard.writeText(smartWalletAddress)
@@ -150,7 +161,7 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
     }
   }
 
-  const showSpinner = isLoadingCredit || isRefreshing || isSyncing
+  const showSpinner = isLoadingCredit || isRefreshing || isSyncing || isLoadingClawdbump
 
   return (
     <Card className="border border-border bg-card p-4">
@@ -183,12 +194,12 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
         <div className="rounded-lg bg-secondary border border-border p-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex-1">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Credits</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">$CLAWDBUMP</p>
               <p className="font-mono text-sm font-semibold text-primary">
                 {showSpinner ? (
                   <span className="text-muted-foreground">Loading...</span>
                 ) : (
-                  `$${displayCredit.toFixed(2)}`
+                  `${clawdbumpBalance ? Number(clawdbumpBalance.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 4 }) : "0"} $CLAWDBUMP`
                 )}
               </p>
             </div>
@@ -204,7 +215,7 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
             </Button>
           </div>
           <p className="text-[9px] text-muted-foreground mt-2">
-            Deposit ETH or WETH to your Smart Wallet to add credits
+            Deposit and hold minimum 50M $CLAWDBUMP token to your Smart Wallet to start using the bot
           </p>
         </div>
       </div>
