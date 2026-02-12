@@ -44,7 +44,7 @@ export default function BumpBotDashboard() {
   const { session, isLoading: isLoadingSession, startSession, stopSession } = useBotSession(privySmartWalletAddress)
   const { data: creditData, refetch: refetchCredit } = useCreditBalance(privySmartWalletAddress, { enabled: !!privySmartWalletAddress })
   const { distributeCredits } = useDistributeCredits()
-  const { data: clawdbumpBalance } = useClawdbumpTokenBalance(
+  const { data: clawdbumpBalance, refetch: refetchClawdbumpBalance } = useClawdbumpTokenBalance(
     privySmartWalletAddress,
     { enabled: !!privySmartWalletAddress }
   )
@@ -230,6 +230,9 @@ export default function BumpBotDashboard() {
               walletAddress={privySmartWalletAddress}
               isSmartAccountActive={!!privySmartWalletAddress}
               ethPriceUsd={ethPriceUsd}
+              clawdbumpBalance={clawdbumpBalance}
+              isLoadingClawdbump={!clawdbumpBalance && !!privySmartWalletAddress}
+              onRefreshClawdbump={refetchClawdbumpBalance}
             />
             <TokenInput 
               initialAddress={targetTokenAddress}
