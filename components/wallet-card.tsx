@@ -7,9 +7,11 @@ import { Copy, Check, Shield, RefreshCw } from "lucide-react"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
 import { useSyncBotBalances } from "@/hooks/use-sync-bot-balances"
 import { usePublicClient } from "wagmi"
-import { formatEther } from "viem"
+import { formatEther, isAddress, encodeFunctionData, type Address, type Hex } from "viem"
 import { toast } from "sonner"
 import { useClawdbumpTokenBalance } from "@/hooks/use-clawdbump-token-balance"
+import { useSmartWallets } from "@privy-io/react-auth/smart-wallets"
+import { CLAWDBUMP_TOKEN_ADDRESS } from "@/lib/constants"
 
 interface WalletCardProps {
   fuelBalance?: number
@@ -22,7 +24,10 @@ interface WalletCardProps {
 export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmartAccountActive = false }: WalletCardProps) {
   const [copied, setCopied] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [withdrawAddress, setWithdrawAddress] = useState("")
+  const [isWithdrawing, setIsWithdrawing] = useState(false)
   const publicClient = usePublicClient()
+  const { client: smartWalletClient } = useSmartWallets()
   
   // Privy Smart Wallet address
   const smartWalletAddress = walletAddress || "0x000...000"
@@ -51,6 +56,63 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
     smartWalletAddress !== "0x000...000" ? smartWalletAddress : null,
     { enabled: isSmartAccountActive && smartWalletAddress !== "0x000...000" }
   )
+
+  // Minimal ERC20 ABI for transfer
+  const ERC20_ABI = [
+    {
+      inputs: [
+        { name: "_to", type: "address" },
+        { name: "_value", type: "uint256" },
+      ],
+      name: "transfer",
+      outputs: [{ name: "", type: "bool" }],
+      stateMutability: "nonpayable",
+      type: "function",
+    },
+  ] as const
+
+  const handleWithdrawClawdbump = async () => {
+    if (!smartWalletClient || !smartWalletAddress || smartWalletAddress === "0x000...000") {
+      toast.error("Wallet not connected")
+      return
+    }
+
+    if (!withdrawAddress || !isAddress(withdrawAddress)) {
+      toast.error("Invalid recipient address")
+      return
+    }
+
+    if (!clawdbumpBalance || clawdbumpBalance.balance === 0n) {
+      toast.error("No $CLAWDBUMP balance to withdraw")
+      return
+    }
+
+    setIsWithdrawing(true)
+    try {
+      const transferData = encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: "transfer",
+        args: [withdrawAddress as Address, clawdbumpBalance.balance],
+      })
+
+      const txHash = await smartWalletClient.sendTransaction({
+        to: CLAWDBUMP_TOKEN_ADDRESS as Address,
+        data: transferData as Hex,
+        value: 0n,
+      }) as `0x${string}`
+
+      toast.success("Withdraw submitted", {
+        description: `Transaction: ${txHash.slice(0, 10)}...${txHash.slice(-6)}`,
+      })
+    } catch (error: any) {
+      console.error("Failed to withdraw $CLAWDBUMP:", error)
+      toast.error("Failed to withdraw $CLAWDBUMP", {
+        description: error?.message || "Unknown error",
+      })
+    } finally {
+      setIsWithdrawing(false)
+    }
+  }
 
   const handleCopy = () => {
     navigator.clipboard.writeText(smartWalletAddress)
@@ -217,6 +279,34 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
           <p className="text-[9px] text-muted-foreground mt-2">
             Deposit and hold minimum 50M $CLAWDBUMP token to your Smart Wallet to start using the bot
           </p>
+
+          <div className="mt-3 space-y-1">
+            <p className="text-[9px] text-muted-foreground">Withdraw $CLAWDBUMP to your own address</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-[10px] font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder="0xRecipientAddress..."
+                value={withdrawAddress}
+                onChange={(e) => setWithdrawAddress(e.target.value)}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-3 text-[10px] font-semibold"
+                disabled={
+                  isWithdrawing ||
+                  !isSmartAccountActive ||
+                  !withdrawAddress ||
+                  !clawdbumpBalance ||
+                  clawdbumpBalance.balance === 0n
+                }
+                onClick={handleWithdrawClawdbump}
+              >
+                {isWithdrawing ? "Withdrawing..." : "Withdraw"}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </Card>
