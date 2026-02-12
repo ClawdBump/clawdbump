@@ -9,7 +9,6 @@ import { useSyncBotBalances } from "@/hooks/use-sync-bot-balances"
 import { usePublicClient } from "wagmi"
 import { formatEther, isAddress, encodeFunctionData, type Address, type Hex } from "viem"
 import { toast } from "sonner"
-import { useClawdbumpTokenBalance } from "@/hooks/use-clawdbump-token-balance"
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets"
 import { CLAWDBUMP_TOKEN_ADDRESS } from "@/lib/constants"
 
@@ -19,9 +18,21 @@ interface WalletCardProps {
   walletAddress?: string | null
   isSmartAccountActive?: boolean
   ethPriceUsd?: number
+  clawdbumpBalance?: { balance: bigint; balanceFormatted: string } | null
+  isLoadingClawdbump?: boolean
+  onRefreshClawdbump?: () => void
 }
 
-export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmartAccountActive = false }: WalletCardProps) {
+export function WalletCard({
+  fuelBalance = 0,
+  credits = 0,
+  walletAddress,
+  isSmartAccountActive = false,
+  ethPriceUsd,
+  clawdbumpBalance,
+  isLoadingClawdbump = false,
+  onRefreshClawdbump,
+}: WalletCardProps) {
   const [copied, setCopied] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [withdrawAddress, setWithdrawAddress] = useState("")
@@ -47,15 +58,6 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
 
   // Use credit from database if available, otherwise fallback to prop
   const displayCredit = creditData?.balanceUsd ?? credits
-
-  // Fetch $CLAWDBUMP token balance from smart wallet
-  const {
-    data: clawdbumpBalance,
-    isLoading: isLoadingClawdbump,
-  } = useClawdbumpTokenBalance(
-    smartWalletAddress !== "0x000...000" ? smartWalletAddress : null,
-    { enabled: isSmartAccountActive && smartWalletAddress !== "0x000...000" }
-  )
 
   // Minimal ERC20 ABI for transfer
   const ERC20_ABI = [
@@ -121,9 +123,8 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
   }
 
   /**
-   * Fetch balance from blockchain (on-chain) and sync with database
-   * Also syncs all bot wallet credits with on-chain balance
-   * This ensures credit balance reflects actual on-chain balance (Native ETH + WETH)
+   * Fetch ETH/WETH balance from blockchain and sync with database
+   * Juga memicu refresh saldo token $CLAWDBUMP melalui callback dari parent
    */
   const handleRefreshBalance = async () => {
     if (!smartWalletAddress || smartWalletAddress === "0x000...000" || !isSmartAccountActive) {
@@ -208,6 +209,10 @@ export function WalletCard({ fuelBalance = 0, credits = 0, walletAddress, isSmar
       
       // Step 4: Refetch credit from database to get updated balance (main + bot wallets)
       await refetchCredit()
+      // Also refresh $CLAWDBUMP token balance displayed in this card
+      if (onRefreshClawdbump) {
+        onRefreshClawdbump()
+      }
       
       toast.success("Balance updated!", {
         description: `Main wallet: ${totalEth} ETH • ${syncResult?.synced || 0} bot wallet(s) synced`,
