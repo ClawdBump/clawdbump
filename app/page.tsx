@@ -19,6 +19,8 @@ import { isAddress } from "viem"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
 import { useBotSession } from "@/hooks/use-bot-session"
 import { useDistributeCredits } from "@/hooks/use-distribute-credits"
+import { useClawdbumpTokenBalance } from "@/hooks/use-clawdbump-token-balance"
+import { BUMP_DECIMALS } from "@/lib/constants"
 import { toast } from "sonner"
 
 export default function BumpBotDashboard() {
@@ -42,6 +44,10 @@ export default function BumpBotDashboard() {
   const { session, isLoading: isLoadingSession, startSession, stopSession } = useBotSession(privySmartWalletAddress)
   const { data: creditData, refetch: refetchCredit } = useCreditBalance(privySmartWalletAddress, { enabled: !!privySmartWalletAddress })
   const { distributeCredits } = useDistributeCredits()
+  const { data: clawdbumpBalance } = useClawdbumpTokenBalance(
+    privySmartWalletAddress,
+    { enabled: !!privySmartWalletAddress }
+  )
 
   useEffect(() => { setIsMounted(true) }, [])
 
@@ -94,6 +100,14 @@ export default function BumpBotDashboard() {
       if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first")
       const amountUsdValue = parseFloat(buyAmountUsd)
       if (isNaN(amountUsdValue) || amountUsdValue <= 0) return toast.error("Invalid amount")
+
+      // Require minimum 50M $CLAWDBUMP in Privy Smart Wallet before starting the bot
+      const minRequiredTokens = BigInt(50_000_000) * 10n ** BigInt(BUMP_DECIMALS)
+      if (!clawdbumpBalance || clawdbumpBalance.balance < minRequiredTokens) {
+        return toast.error("Insufficient $CLAWDBUMP balance", {
+          description: "You must hold at least 50,000,000 $CLAWDBUMP in your Privy Smart Wallet to start bumping.",
+        })
+      }
 
       try {
         setBumpLoadingState("Checking Wallets...")
@@ -162,7 +176,7 @@ export default function BumpBotDashboard() {
         toast.error("Failed to stop")
       } finally { setBumpLoadingState(null) }
     }
-  }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession])
+  }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession, clawdbumpBalance])
 
   const telegramAccount = useMemo(() => user?.linkedAccounts?.find((a: any) => a.type === 'telegram'), [user])
   const telegramUsername = (telegramAccount as any)?.username ? `@${(telegramAccount as any).username}` : (telegramAccount as any)?.first_name || null
