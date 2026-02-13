@@ -4,7 +4,7 @@
 // - Also supports NEXT_PUBLIC_CLAWDBUMP_TOKEN_ADDRESS for client-side usage
 // - Falls back to the default hardcoded address if env is not set
 // - Default now set to the main $CLAWDBUMP token: 0x6790fc10a8a2ee1990880577bdfc2c514ce1fb07
-const DEFAULT_CLAWDBUMP_TOKEN_ADDRESS = "" as const
+const DEFAULT_CLAWDBUMP_TOKEN_ADDRESS = "0x6790fc10A8A2Ee1990880577BdFc2C514ce1fb07" as const
 
 export const CLAWDBUMP_TOKEN_ADDRESS =
   (process.env.NEXT_PUBLIC_CLAWDBUMP_TOKEN_ADDRESS ||
