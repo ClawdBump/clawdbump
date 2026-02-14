@@ -97,9 +97,14 @@ export default function BumpBotDashboard() {
     return data.wallets
   }
 
-const { isPaired, isPairing, error: telegramPairError } = useTelegramPair()
-  
-const {
+  // Telegram pairing hook (for standard Telegram OAuth via Privy)
+  // Automatically pairs Telegram ID with Privy user after Telegram login
+  // This allows ClawdBumpbot to check if user has logged in via Telegram
+  const { isPaired, isPairing, error: telegramPairError } = useTelegramPair()
+
+  // Telegram Mini App authentication hook
+  // Handles initData verification and wallet update for Telegram Mini App
+  const {
     isTelegramWebApp,
     isVerified: isTelegramVerified,
     telegramId: telegramMiniAppId,
@@ -107,6 +112,26 @@ const {
     isLoading: isTelegramLoading,
     error: telegramError,
   } = useTelegramMiniAppAuth()
+
+  // Extract Telegram account data from Privy user object
+  // Check for Telegram account using Privy's recommended approach
+  let telegramAccount = user?.telegram
+  if (!telegramAccount) {
+    telegramAccount = user?.linkedAccounts?.find(
+      (account: any) => account.type === "telegram"
+    )
+  }
+
+  // Extract Telegram user data
+  const telegramUsername = telegramAccount 
+    ? ((telegramAccount as any).username 
+        ? `@${(telegramAccount as any).username}` 
+        : (telegramAccount as any).first_name || null)
+    : null
+
+  const telegramPhotoUrl = telegramAccount 
+    ? ((telegramAccount as any).photo_url || null)
+    : null
   
   const handleToggle = useCallback(async () => {
     if (!isActive) {
