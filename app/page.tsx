@@ -23,12 +23,16 @@ import { useClawdbumpTokenBalance } from "@/hooks/use-clawdbump-token-balance"
 import { BUMP_DECIMALS } from "@/lib/constants"
 import { useTelegramPair } from "@/hooks/use-telegram-pair"
 import { useTelegramMiniAppAuth } from "@/hooks/use-telegram-miniapp-auth"
+import { usePriyTelegramSync } from "@/hooks/use-privy-telegram-sync"
 import { toast } from "sonner"
 
 export default function BumpBotDashboard() {
   const { ready: privyReady, user, authenticated, login } = usePrivy()
   const { wallets } = useWallets()
   const { client: smartWalletClient } = useSmartWallets()
+  
+  // Sync Telegram user data to Supabase when user logs in via Privy
+  usePriyTelegramSync()
   
   const [privySmartWalletAddress, setPrivySmartWalletAddress] = useState<string | null>(null)
   const [targetTokenAddress, setTargetTokenAddress] = useState<string | null>(null)
