@@ -7,107 +7,287 @@ import { WalletCard } from "@/components/wallet-card"
 import { TokenInput } from "@/components/token-input"
 import { ConfigPanel } from "@/components/config-panel"
 import { ActionButton } from "@/components/action-button"
-import { ActivityFeed } from "@/components/activity-feed"
 import { BotLiveActivity } from "@/components/bot-live-activity"
 import { PriceChart } from "@/components/price-chart"
 import { ManageBot } from "@/components/manage-bot"
 import { User } from "lucide-react"
-import Image from "next/image"
+import Image from "next/image" // PERBAIKAN DI SINI: sebelumnya "image"
 import { usePrivy, useWallets } from "@privy-io/react-auth"
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets"
-import { useAccount, usePublicClient, useWalletClient } from "wagmi"
-import { base } from "wagmi/chains"
-import { isAddress, createWalletClient, http, custom, formatEther } from "viem"
+import { useAccount, usePublicClient } from "wagmi"
+import { isAddress } from "viem"
 import { useCreditBalance } from "@/hooks/use-credit-balance"
 import { useBotSession } from "@/hooks/use-bot-session"
 import { useDistributeCredits } from "@/hooks/use-distribute-credits"
+import { useClawdbumpTokenBalance } from "@/hooks/use-clawdbump-token-balance"
+import { BUMP_DECIMALS } from "@/lib/constants"
 import { useTelegramPair } from "@/hooks/use-telegram-pair"
 import { useTelegramMiniAppAuth } from "@/hooks/use-telegram-miniapp-auth"
-// Removed useBotWallets import - using manual state management instead
-import { parseUnits } from "viem"
 import { toast } from "sonner"
 
 export default function BumpBotDashboard() {
-  
-  
-  const { ready: privyReady, user, authenticated, login, createWallet } = usePrivy()
+  const { ready: privyReady, user, authenticated, login } = usePrivy()
   const { wallets } = useWallets()
-  const { address: wagmiAddress, isConnected: wagmiConnected } = useAccount()
-  
-  // Create a standard public client for reading blockchain data
-  // This uses the standard Base RPC, not Coinbase CDP with Paymaster
-  const publicClient = usePublicClient()
-  
-  // Create a wallet client for funding transactions WITHOUT Paymaster
-  // This is separate from Privy's Smart Wallet client to avoid Paymaster middleware
-  const { data: walletClient } = useWalletClient()
-  
-  // Use useSmartWallets hook to detect Smart Account
-  // This is the recommended way to access Smart Wallets in Privy
   const { client: smartWalletClient } = useSmartWallets()
   
-  // Function to verify if an address is a smart wallet contract (not EOA)
-  // Smart wallet contracts have code size > 0, EOA has code size = 0
-  // CRITICAL: Wrap with useCallback to stabilize reference and prevent infinite loops
-  const verifySmartWalletContract = useCallback(async (address: string): Promise<boolean> => {
-    if (!publicClient || !isAddress(address)) {
-      return false
-    }
-    
-    try {
-      const code = await publicClient.getBytecode({ address: address as `0x${string}` })
-      // Smart wallet contract has code, EOA has no code (null or "0x")
-      const isContract = !!(code && code !== "0x" && code.length > 2)
-      return isContract
-    } catch (error) {
-      console.error("  âŒ Error verifying smart wallet contract:", error)
-      return false
-    }
-  }, [publicClient])
-  
-  // State to store Smart Wallet address (detected via useEffect when ready)
   const [privySmartWalletAddress, setPrivySmartWalletAddress] = useState<string | null>(null)
-  const [smartWallet, setSmartWallet] = useState<any>(null)
-  const [sdkReady, setSdkReady] = useState(false)
-  const [isCreatingSmartWallet, setIsCreatingSmartWallet] = useState(false)
-  
-  // State for target token address (from TokenInput)
-  // CRITICAL: Don't access privySmartWalletAddress in initializer - it's not initialized yet
-  // Will be restored from localStorage in useEffect after privySmartWalletAddress is available
   const [targetTokenAddress, setTargetTokenAddress] = useState<string | null>(null)
   const [isTokenVerified, setIsTokenVerified] = useState(false)
-  const [tokenMetadata, setTokenMetadata] = useState<{ name: string; symbol: string; decimals: number } | null>(null)
-  
-  // CRITICAL: Sticky state for isBumping - must be declared before useEffect that uses it
-  // Don't access privySmartWalletAddress in initializer - will be restored in useEffect
+  const [tokenMetadata, setTokenMetadata] = useState<any>(null)
   const [isActive, setIsActive] = useState<boolean>(false)
-  
-  // CRITICAL: Use a ref to track if we've already restored state to prevent multiple restorations
-  // Must be declared early at component level, before any useEffect that uses it
-  const hasRestoredStateRef = useRef(false)
-  const hasRestoredFromSessionRef = useRef(false)
-  
-  // CRITICAL: Declare slider state BEFORE restoration useEffect
-  // This prevents "Cannot access before initialization" errors in production
-  const [buyAmountUsd, setBuyAmountUsd] = useState("0.01") // Default: 0.01 USD (micro transaction support)
-  const [intervalSeconds, setIntervalSeconds] = useState(60) // Default: 60 seconds (1 minute)
-  
-  // CRITICAL: Persist isBumping state to localStorage
-  // This ensures state persists across tab switches and page refreshes
+  const [buyAmountUsd, setBuyAmountUsd] = useState("0.01")
+  const [intervalSeconds, setIntervalSeconds] = useState(60)
+  const [bumpLoadingState, setBumpLoadingState] = useState<string | null>(null)
+  const [ethPriceUsd, setEthPriceUsd] = useState<number>(3000)
+  const [existingBotWallets, setExistingBotWallets] = useState<any[] | null>(null)
+  const [activeTab, setActiveTab] = useState("control")
+  const [isMounted, setIsMounted] = useState(false)
+
+  const { session, isLoading: isLoadingSession, startSession, stopSession } = useBotSession(privySmartWalletAddress)
+  const { data: creditData, refetch: refetchCredit } = useCreditBalance(privySmartWalletAddress, { enabled: !!privySmartWalletAddress })
+  const { distributeCredits } = useDistributeCredits()
+  const { data: clawdbumpBalance, refetch: refetchClawdbumpBalance } = useClawdbumpTokenBalance(
+    privySmartWalletAddress,
+    { enabled: !!privySmartWalletAddress }
+  )
+
+  useEffect(() => { setIsMounted(true) }, [])
+
+  const credits = useMemo(() => creditData?.balanceUsd || 0, [creditData])
+
+  // Sinkronisasi Smart Wallet Address
   useEffect(() => {
-    if (typeof window !== "undefined" && privySmartWalletAddress) {
-      if (isActive) {
-        localStorage.setItem(`isBumping_${privySmartWalletAddress}`, "true")
-      } else {
-        // Only clear when user explicitly stops bumping (handled in stopSession)
-        // Don't clear on tab switch or other actions
+    const sw = wallets.find((w) => (w as any).type === 'smart_wallet' || w.walletClientType === 'smart_wallet')
+    setPrivySmartWalletAddress(smartWalletClient?.account?.address || sw?.address || null)
+  }, [wallets, smartWalletClient])
+
+  // Memuat bot wallets agar Tab Manage Bot berfungsi
+  useEffect(() => {
+    if (privySmartWalletAddress) {
+      ensureBotWallets(privySmartWalletAddress)
+        .then(wallets => setExistingBotWallets(wallets))
+        .catch(err => console.error("Failed to pre-fetch bot wallets", err))
+    }
+  }, [privySmartWalletAddress])
+
+  // Sinkronisasi status isActive dengan Database
+  useEffect(() => {
+    if (!isLoadingSession) {
+      const isRunning = session?.status === "running"
+      setIsActive(isRunning)
+      if (isRunning && session) {
+        if (session.token_address) setTargetTokenAddress(session.token_address)
+        if (session.amount_usd) setBuyAmountUsd(session.amount_usd)
+        if (session.interval_seconds) setIntervalSeconds(session.interval_seconds)
+        setIsTokenVerified(true)
       }
     }
-  }, [isActive, privySmartWalletAddress])
+  }, [session, isLoadingSession])
 
-  // Persist targetTokenAddress to localStorage whenever it changes
-  useEffect(() => {
-    if (typeof window !== "undefined" && privySmartWalletAddress) {
+  const ensureBotWallets = async (userAddress: string) => {
+    const response = await fetch("/api/bot/get-or-create-wallets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userAddress: userAddress.toLowerCase() }),
+    })
+    const data = await response.json()
+    if (!response.ok || !data.wallets || data.wallets.length !== 5) {
+      throw new Error("Failed to prepare 5 bot wallets")
+    }
+    return data.wallets
+  }
+
+const { isPaired, isPairing, error: telegramPairError } = useTelegramPair()
+  
+const {
+    isTelegramWebApp,
+    isVerified: isTelegramVerified,
+    telegramId: telegramMiniAppId,
+    walletAddress: telegramWalletAddress,
+    isLoading: isTelegramLoading,
+    error: telegramError,
+  } = useTelegramMiniAppAuth()
+  
+  const handleToggle = useCallback(async () => {
+    if (!isActive) {
+      if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first")
+      const amountUsdValue = parseFloat(buyAmountUsd)
+      if (isNaN(amountUsdValue) || amountUsdValue <= 0) return toast.error("Invalid amount")
+
+      // Require minimum 50M $CLAWDBUMP in Privy Smart Wallet before starting the bot
+      const minRequiredTokens = BigInt(50_000) * 10n ** BigInt(BUMP_DECIMALS)
+      if (!clawdbumpBalance || clawdbumpBalance.balance < minRequiredTokens) {
+        return toast.error("Insufficient $CLAWDBUMP balance", {
+          description: "You must hold at least 50,000,000 $CLAWDBUMP in your Privy Smart Wallet to start bumping.",
+        })
+      }
+
+      try {
+        setBumpLoadingState("Checking Wallets...")
+        const walletsList = await ensureBotWallets(privySmartWalletAddress!)
+        setExistingBotWallets(walletsList)
+
+        setBumpLoadingState("Checking Balances...")
+        const priceRes = await fetch("/api/eth-price")
+        const priceData = await priceRes.json()
+        const currentEthPrice = priceData.price || 3000
+        const requiredWeiPerBot = BigInt(Math.floor((amountUsdValue / currentEthPrice) * 1e18))
+
+        let needsDistribution = false
+        for (const bot of walletsList) {
+          const balRes = await fetch("/api/bot/wallet-weth-balance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userAddress: privySmartWalletAddress, botWalletAddress: bot.smartWalletAddress }),
+          })
+          const balData = await balRes.json()
+          if (BigInt(balData.wethBalanceWei || "0") < requiredWeiPerBot) {
+            needsDistribution = true
+            break
+          }
+        }
+
+        if (needsDistribution) {
+          setBumpLoadingState("Distributing Credits...")
+          const mainCreditWei = creditData?.balanceWei ? BigInt(creditData.balanceWei) : BigInt(0)
+          if (mainCreditWei === BigInt(0)) throw new Error("Insufficient main credit for distribution")
+
+          await distributeCredits({
+            userAddress: privySmartWalletAddress as `0x${string}`,
+            botWallets: walletsList,
+            creditBalanceWei: mainCreditWei,
+          })
+          await new Promise(r => setTimeout(r, 2000))
+        }
+
+        setBumpLoadingState("Launching Bot...")
+        await startSession({
+          userAddress: privySmartWalletAddress!,
+          tokenAddress: targetTokenAddress as `0x${string}`,
+          amountUsd: buyAmountUsd,
+          intervalSeconds: intervalSeconds,
+        })
+        
+        fetch("/api/bot/continuous-swap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userAddress: privySmartWalletAddress }),
+        })
+
+        toast.success("Bumping Started!")
+        setActiveTab("activity")
+      } catch (e: any) {
+        toast.error(e.message || "Failed to start")
+      } finally { setBumpLoadingState(null) }
+    } else {
+      try {
+        setBumpLoadingState("Stopping...")
+        await stopSession()
+        setIsActive(false)
+        toast.success("Bumping Stopped")
+      } catch (e) {
+        toast.error("Failed to stop")
+      } finally { setBumpLoadingState(null) }
+    }
+  }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession, clawdbumpBalance])
+
+  const telegramAccount = useMemo(() => user?.linkedAccounts?.find((a: any) => a.type === 'telegram'), [user])
+  const telegramUsername = (telegramAccount as any)?.username ? `@${(telegramAccount as any).username}` : (telegramAccount as any)?.first_name || null
+  const telegramPhoto = (telegramAccount as any)?.photo_url || null
+
+  if (!isMounted) return null
+
+  return (
+    <div className="min-h-screen bg-background p-4 pb-safe">
+      <div className="mx-auto max-w-2xl space-y-4">
+        <header className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="relative h-16 w-16">
+                <Image src="/clawdbump-logo.png" alt="Logo" fill className="object-contain" />
+              </div>
+              <div>
+                <h1 className="font-mono text-base font-semibold">ClawdBump</h1>
+                <p className="text-xs text-muted-foreground">Built to Trend</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+               {authenticated && (
+                 <div className="flex items-center gap-2 rounded-full bg-secondary/50 px-3 py-1 border border-border">
+                    {telegramPhoto ? (
+                      <img src={telegramPhoto} className="h-5 w-5 rounded-full object-cover" alt="avatar" />
+                    ) : (
+                      <User className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="text-xs font-medium truncate max-w-[100px]">
+                      {telegramUsername || "User"}
+                    </span>
+                 </div>
+               )}
+               <div className={`h-3 w-3 rounded-full ${authenticated ? "bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-gray-400"}`} />
+            </div>
+          </div>
+        </header>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="w-full grid grid-cols-3 bg-card border border-border">
+            <TabsTrigger value="control">Control Panel</TabsTrigger>
+            <TabsTrigger value="activity">Live Activity</TabsTrigger>
+            <TabsTrigger value="manage">Manage Bot</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="control" className="space-y-4 mt-4">
+            <PriceChart tokenAddress={targetTokenAddress} />
+            <WalletCard 
+              credits={credits} 
+              walletAddress={privySmartWalletAddress}
+              isSmartAccountActive={!!privySmartWalletAddress}
+              ethPriceUsd={ethPriceUsd}
+              clawdbumpBalance={clawdbumpBalance}
+              isLoadingClawdbump={!clawdbumpBalance && !!privySmartWalletAddress}
+              onRefreshClawdbump={refetchClawdbumpBalance}
+            />
+            <TokenInput 
+              initialAddress={targetTokenAddress}
+              disabled={isActive || !!bumpLoadingState}
+              onAddressChange={setTargetTokenAddress}
+              onVerifiedChange={(v, m) => { setIsTokenVerified(v); setTokenMetadata(m); }}
+            />
+            <ConfigPanel 
+              credits={credits} 
+              smartWalletAddress={privySmartWalletAddress}
+              buyAmountUsd={buyAmountUsd}
+              onBuyAmountChange={setBuyAmountUsd}
+              intervalSeconds={intervalSeconds}
+              onIntervalChange={setIntervalSeconds}
+              isActive={isActive || !!bumpLoadingState} 
+            />
+            <ActionButton 
+              isActive={isActive} 
+              onToggle={handleToggle}
+              credits={isTokenVerified && !isActive ? 999999 : credits}
+              isVerified={isTokenVerified}
+              loadingState={bumpLoadingState}
+              hasBotWallets={true} 
+              overrideLabel={isActive ? "Stop Bumping" : "Start Bumping"}
+            />
+          </TabsContent>
+
+          <TabsContent value="activity" className="mt-4">
+            <BotLiveActivity userAddress={privySmartWalletAddress} enabled={!!privySmartWalletAddress} />
+          </TabsContent>
+
+          <TabsContent value="manage" className="mt-4">
+            <ManageBot 
+              userAddress={privySmartWalletAddress} 
+              botWallets={existingBotWallets} 
+            />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  )
+            }    if (typeof window !== "undefined" && privySmartWalletAddress) {
       if (targetTokenAddress) {
         localStorage.setItem(`targetTokenAddress_${privySmartWalletAddress}`, targetTokenAddress)
       } else {
