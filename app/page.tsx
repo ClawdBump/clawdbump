@@ -216,7 +216,7 @@ export default function BumpBotDashboard() {
     }
   }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession, clawdbumpBalance])
 
-  const telegramAccount = useMemo(() => user?.linkedAccounts?.find((a: any) => a.type === 'telegram'), [user])
+  
   const telegramUsername = (telegramAccount as any)?.username ? `@${(telegramAccount as any).username}` : (telegramAccount as any)?.first_name || null
   const telegramPhoto = (telegramAccount as any)?.photo_url || null
 
