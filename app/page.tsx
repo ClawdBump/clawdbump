@@ -28,14 +28,7 @@ import { parseUnits } from "viem"
 import { toast } from "sonner"
 
 export default function BumpBotDashboard() {
-  const { isInWarpcast, isReady, context } = useFarcasterMiniApp()
-  const { 
-    isAuthenticated,
-    farcasterUser,
-    privyUser,
-    initLoginToMiniApp,
-    loginToMiniApp
-  } = useFarcasterAuth()
+  
   
   const { ready: privyReady, user, authenticated, login, createWallet } = usePrivy()
   const { wallets } = useWallets()
