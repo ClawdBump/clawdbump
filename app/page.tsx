@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
-import { sdk } from "@farcaster/miniapp-sdk"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { WalletCard } from "@/components/wallet-card"
