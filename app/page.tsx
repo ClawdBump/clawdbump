@@ -218,7 +218,7 @@ export default function BumpBotDashboard() {
 
   
  
-
+if (!isMounted) return null
   return (
     <div className="min-h-screen bg-background p-4 pb-safe">
       <div className="mx-auto max-w-2xl space-y-4">
