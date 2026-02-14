@@ -13,7 +13,7 @@ export const CLAWDBUMP_TOKEN_ADDRESS =
 
 // Backwards-compatible alias used across the app
 export const BUMP_TOKEN_ADDRESS = CLAWDBUMP_TOKEN_ADDRESS
-export const TREASURY_ADDRESS = "0x831204121Dbf75Fd11256a96831E6acD669B4bf6" as const
+export const TREASURY_ADDRESS = "0x6b19b32ce728028d913c24c42f47867c32eabba3" as const
 export const BASE_WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
 
 // Uniswap V4 PoolManager on Base Mainnet
