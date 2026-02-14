@@ -217,10 +217,7 @@ export default function BumpBotDashboard() {
   }, [isActive, isTokenVerified, targetTokenAddress, buyAmountUsd, intervalSeconds, privySmartWalletAddress, creditData, distributeCredits, startSession, stopSession, clawdbumpBalance])
 
   
-  const telegramUsername = (telegramAccount as any)?.username ? `@${(telegramAccount as any).username}` : (telegramAccount as any)?.first_name || null
-  const telegramPhoto = (telegramAccount as any)?.photo_url || null
-
-  if (!isMounted) return null
+ 
 
   return (
     <div className="min-h-screen bg-background p-4 pb-safe">
