@@ -97,6 +97,17 @@ export default function BumpBotDashboard() {
     return data.wallets
   }
 
+const { isPaired, isPairing, error: telegramPairError } = useTelegramPair()
+  
+const {
+    isTelegramWebApp,
+    isVerified: isTelegramVerified,
+    telegramId: telegramMiniAppId,
+    walletAddress: telegramWalletAddress,
+    isLoading: isTelegramLoading,
+    error: telegramError,
+  } = useTelegramMiniAppAuth()
+  
   const handleToggle = useCallback(async () => {
     if (!isActive) {
       if (!isTokenVerified || !targetTokenAddress) return toast.error("Please verify token first")
