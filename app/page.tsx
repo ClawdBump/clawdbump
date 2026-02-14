@@ -21,6 +21,8 @@ import { useBotSession } from "@/hooks/use-bot-session"
 import { useDistributeCredits } from "@/hooks/use-distribute-credits"
 import { useClawdbumpTokenBalance } from "@/hooks/use-clawdbump-token-balance"
 import { BUMP_DECIMALS } from "@/lib/constants"
+import { useTelegramPair } from "@/hooks/use-telegram-pair"
+import { useTelegramMiniAppAuth } from "@/hooks/use-telegram-miniapp-auth"
 import { toast } from "sonner"
 
 export default function BumpBotDashboard() {
