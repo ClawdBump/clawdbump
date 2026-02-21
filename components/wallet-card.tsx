@@ -282,7 +282,7 @@ export function WalletCard({
             </Button>
           </div>
           <p className="text-[9px] text-muted-foreground mt-2">
-            Deposit and hold minimum 50K $BUMP token to your Smart Wallet to start using the bot
+            Deposit and hold minimum 500K $BUMP token to your Smart Wallet to start using the bot
           </p>
 
           <div className="mt-3 space-y-1">
