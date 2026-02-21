@@ -10,6 +10,9 @@ export const runtime = "nodejs"
 // WETH Address (Base Network)
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
 
+// Native ETH (zero address)
+const NATIVE_ETH_ADDRESS = "0x0000000000000000000000000000000000000000" as const
+
 // ERC20 ABI untuk transfer dan balance
 const ERC20_ABI = [
   { constant: true, inputs: [{ name: "_owner", type: "address" }], name: "balanceOf", outputs: [{ name: "balance", type: "uint256" }], type: "function" },
@@ -43,6 +46,8 @@ export async function POST(request: NextRequest) {
 
     const results = []
 
+    const isNativeEth = tokenAddress.toLowerCase() === NATIVE_ETH_ADDRESS.toLowerCase()
+
     // Loop untuk memproses 5 bot sekaligus
     for (const botAddress of botWalletAddresses) {
       try {
@@ -61,12 +66,17 @@ export async function POST(request: NextRequest) {
         }
 
         // 2. Cek saldo on-chain (untuk mendapatkan MAX amount)
-        const balance = await publicClient.readContract({
-          address: tokenAddress as Address,
-          abi: ERC20_ABI,
-          functionName: "balanceOf",
-          args: [botWallet.smart_account_address as Address],
-        }) as bigint
+        let balance: bigint
+        if (isNativeEth) {
+          balance = await publicClient.getBalance({ address: botWallet.smart_account_address as Address })
+        } else {
+          balance = await publicClient.readContract({
+            address: tokenAddress as Address,
+            abi: ERC20_ABI,
+            functionName: "balanceOf",
+            args: [botWallet.smart_account_address as Address],
+          }) as bigint
+        }
 
         if (balance === BigInt(0)) {
           results.push({ address: botAddress, status: "skipped", message: "Zero balance" })
@@ -80,17 +90,29 @@ export async function POST(request: NextRequest) {
           address: botWallet.smart_account_address as Address,
         })
 
-        // 4. Encode Transfer
-        const transferData = encodeFunctionData({
-          abi: ERC20_ABI,
-          functionName: "transfer",
-          args: [recipientAddress as Address, balance],
-        })
+        // 4. Encode Transfer atau Native ETH transfer
+        let callTo: Address
+        let callData: Hex
+        let callValue: bigint
+
+        if (isNativeEth) {
+          callTo = recipientAddress as Address
+          callData = "0x" as Hex
+          callValue = balance
+        } else {
+          callTo = tokenAddress as Address
+          callData = encodeFunctionData({
+            abi: ERC20_ABI,
+            functionName: "transfer",
+            args: [recipientAddress as Address, balance],
+          })
+          callValue = BigInt(0)
+        }
 
         // 5. Kirim UserOperation (Gasless/Sponsored)
         const userOpHash = await (smartAccount as any).sendUserOperation({
           network: "base",
-          calls: [{ to: tokenAddress as Address, data: transferData as Hex, value: BigInt(0) }],
+          calls: [{ to: callTo, data: callData, value: callValue }],
           isSponsored: true,
         })
 

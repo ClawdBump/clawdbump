@@ -9,6 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { isAddress } from "viem"
 import { toast } from "sonner"
 import { Send, Loader2, RefreshCw, Wallet, ArrowRightLeft } from "lucide-react"
+import { useTotalBlockchainBalance } from "@/hooks/use-blockchain-balance"
+
+const NATIVE_ETH_ADDRESS = "0x0000000000000000000000000000000000000000" as const
 
 interface TokenInfo {
   address: string
@@ -32,6 +35,16 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
   const [isSending, setIsSending] = useState(false)
   const [isWithdrawingWeth, setIsWithdrawingWeth] = useState(false)
   const [tokens, setTokens] = useState<TokenInfo[]>([])
+
+  const botWalletAddresses = useMemo(
+    () => botWallets?.map((w) => w.smartWalletAddress) ?? [],
+    [botWallets]
+  )
+  const { totalBalance, botBalances, isLoading: isLoadingUserEth, refetch: refetchBalances } = useTotalBlockchainBalance({
+    mainWalletAddress: userAddress,
+    botWalletAddresses,
+    enabled: !!userAddress,
+  })
 
   const fetchTokenBalances = async () => {
     if (!botWallets || botWallets.length === 0) return
@@ -60,9 +73,35 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
     fetchTokenBalances()
   }, [botWallets])
 
+  const tokensWithNativeEth = useMemo(() => {
+    const nativeEthWalletBalances =
+      botWalletAddresses && botBalances
+        ? botWalletAddresses
+            .map((addr, i) => ({
+              address: addr,
+              balance: (botBalances[i]?.nativeEth ?? 0n).toString(),
+            }))
+            .filter((wb) => BigInt(wb.balance) > 0n)
+        : []
+    const nativeEthTotalWei = nativeEthWalletBalances.reduce((sum, wb) => sum + BigInt(wb.balance), 0n)
+    const nativeEthToken: TokenInfo | null =
+      nativeEthTotalWei > 0n
+        ? {
+            address: NATIVE_ETH_ADDRESS,
+            symbol: "ETH",
+            name: "Ethereum",
+            decimals: 18,
+            balanceWei: nativeEthTotalWei.toString(),
+            balanceFormatted: (Number(nativeEthTotalWei) / 1e18).toFixed(18),
+            walletBalances: nativeEthWalletBalances,
+          }
+        : null
+    return nativeEthToken ? [nativeEthToken, ...tokens] : tokens
+  }, [tokens, botWalletAddresses, botBalances])
+
   const selectedTokenInfo = useMemo(() => {
-    return tokens.find((t) => t.address.toLowerCase() === selectedToken.toLowerCase()) || null
-  }, [tokens, selectedToken])
+    return tokensWithNativeEth.find((t) => t.address.toLowerCase() === selectedToken.toLowerCase()) || null
+  }, [tokensWithNativeEth, selectedToken])
 
   const handleSend = async () => {
     if (!selectedTokenInfo || !recipientAddress) {
@@ -98,7 +137,7 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
       if (data.success) {
         const successCount = data.details.filter((d: any) => d.status === "success").length
         toast.success(`Success`, { description: `Successfully sent from ${successCount} wallets.` })
-        setSelectedToken(""); setRecipientAddress(""); fetchTokenBalances()
+        setSelectedToken(""); setRecipientAddress(""); fetchTokenBalances(); refetchBalances()
       } else {
         toast.error(data.error || "Transaction failed")
       }
@@ -142,7 +181,7 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
       if (data.success) {
         const successCount = data.details.filter((d: any) => d.status === "success").length
         toast.success(`Withdraw Success`, { description: `Swapped and sent WETH from ${successCount} wallets.` })
-        setSelectedToken(""); setRecipientAddress(""); fetchTokenBalances()
+        setSelectedToken(""); setRecipientAddress(""); fetchTokenBalances(); refetchBalances()
       } else {
         toast.error(data.error || "Withdrawal failed")
       }
@@ -160,7 +199,7 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
           <Wallet className="h-4 w-4" /> Manage Bot
         </h3>
         <button
-          onClick={fetchTokenBalances}
+          onClick={() => { fetchTokenBalances(); refetchBalances() }}
           disabled={isLoadingTokens || isSending || isWithdrawingWeth}
           className="text-muted-foreground hover:text-white transition-colors disabled:opacity-50"
         >
@@ -170,16 +209,23 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
 
       <div className="space-y-4">
         <div className="space-y-2">
-          <Label className="text-xs text-muted-foreground">Select Token</Label>
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Select Token</Label>
+            {userAddress && (
+              <span className="text-xs text-muted-foreground">
+                Total (main + bots): {isLoadingUserEth ? "..." : totalBalance ? `${parseFloat(totalBalance.nativeEthFormatted).toFixed(6)} ETH` : "—"}
+              </span>
+            )}
+          </div>
           <Select value={selectedToken} onValueChange={setSelectedToken} disabled={isLoadingTokens || isSending || isWithdrawingWeth}>
             <SelectTrigger className="w-full font-mono text-xs bg-background/50">
               <SelectValue placeholder={isLoadingTokens ? "Scanning..." : "Select Token"} />
             </SelectTrigger>
             <SelectContent>
-              {tokens.length === 0 ? (
+              {tokensWithNativeEth.length === 0 ? (
                 <SelectItem value="none" disabled>No Tokens Found</SelectItem>
               ) : (
-                tokens.map((token) => (
+                tokensWithNativeEth.map((token) => (
                   <SelectItem key={token.address} value={token.address}>
                     {token.symbol} — {parseFloat(token.balanceFormatted).toFixed(4)}
                   </SelectItem>
@@ -225,7 +271,7 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
 
           <Button
             onClick={handleWithdrawWeth}
-            disabled={isSending || isWithdrawingWeth || !selectedToken || !recipientAddress}
+            disabled={isSending || isWithdrawingWeth || !selectedToken || !recipientAddress || selectedToken.toLowerCase() === NATIVE_ETH_ADDRESS.toLowerCase()}
             className="w-full text-white font-bold transition-all active:scale-95"
             style={{ backgroundColor: "#10b981" }} 
           >
