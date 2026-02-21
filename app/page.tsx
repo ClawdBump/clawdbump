@@ -122,7 +122,7 @@ const {
       const minRequiredTokens = BigInt(50_000) * 10n ** BigInt(BUMP_DECIMALS)
       if (!clawdbumpBalance || clawdbumpBalance.balance < minRequiredTokens) {
         return toast.error("Insufficient $BUMP balance", {
-          description: "You must hold at least 50,000 $BUMP in your Privy Smart Wallet to start bumping.",
+          description: "You must hold at least 500,000 $BUMP in your Privy Smart Wallet to start bumping.",
         })
       }
 
