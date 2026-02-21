@@ -3,13 +3,13 @@ import { formatEther, isAddress, type Address, type Hex, createPublicClient, htt
 import { base } from "viem/chains"
 import { createSupabaseServiceClient } from "@/lib/supabase"
 import { CdpClient } from "@coinbase/cdp-sdk"
+import { BUMP_TOKEN_ADDRESS } from "@/lib/constants"
 import "dotenv/config"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
 const WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
-const BUMP_TOKEN_ADDRESS = "0x8984B389cB82e05016DB2E4c7230ca0791b9Cb07" as const
 
 const ERC20_ABI = [
   {

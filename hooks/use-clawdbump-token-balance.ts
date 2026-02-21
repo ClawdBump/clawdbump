@@ -60,7 +60,7 @@ export function useClawdbumpTokenBalance(
         balanceFormatted,
       })
     } catch (err: any) {
-      console.error("Failed to fetch $CLAWDBUMP token balance:", err)
+      console.error("Failed to fetch $BUMP token balance:", err)
       setError(err)
     } finally {
       setIsLoading(false)

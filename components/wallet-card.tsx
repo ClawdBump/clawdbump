@@ -10,7 +10,7 @@ import { usePublicClient } from "wagmi"
 import { formatEther, isAddress, encodeFunctionData, type Address, type Hex } from "viem"
 import { toast } from "sonner"
 import { useSmartWallets } from "@privy-io/react-auth/smart-wallets"
-import { CLAWDBUMP_TOKEN_ADDRESS } from "@/lib/constants"
+import { BUMP_TOKEN_ADDRESS } from "@/lib/constants"
 
 interface WalletCardProps {
   fuelBalance?: number
@@ -85,7 +85,7 @@ export function WalletCard({
     }
 
     if (!clawdbumpBalance || clawdbumpBalance.balance === 0n) {
-      toast.error("No $CLAWDBUMP balance to withdraw")
+      toast.error("No $BUMP balance to withdraw")
       return
     }
 
@@ -98,7 +98,7 @@ export function WalletCard({
       })
 
       const txHash = await smartWalletClient.sendTransaction({
-        to: CLAWDBUMP_TOKEN_ADDRESS as Address,
+        to: BUMP_TOKEN_ADDRESS as Address,
         data: transferData as Hex,
         value: 0n,
       }) as `0x${string}`
@@ -107,8 +107,8 @@ export function WalletCard({
         description: `Transaction: ${txHash.slice(0, 10)}...${txHash.slice(-6)}`,
       })
     } catch (error: any) {
-      console.error("Failed to withdraw $CLAWDBUMP:", error)
-      toast.error("Failed to withdraw $CLAWDBUMP", {
+      console.error("Failed to withdraw $BUMP:", error)
+      toast.error("Failed to withdraw $BUMP", {
         description: error?.message || "Unknown error",
       })
     } finally {
@@ -261,12 +261,12 @@ export function WalletCard({
         <div className="rounded-lg bg-secondary border border-border p-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex-1">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">$CLAWDBUMP</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">$BUMP</p>
               <p className="font-mono text-sm font-semibold text-primary">
                 {showSpinner ? (
                   <span className="text-muted-foreground">Loading...</span>
                 ) : (
-                  `${clawdbumpBalance ? Number(clawdbumpBalance.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 4 }) : "0"} $CLAWDBUMP`
+                  `${clawdbumpBalance ? Number(clawdbumpBalance.balanceFormatted).toLocaleString(undefined, { maximumFractionDigits: 4 }) : "0"} $BUMP`
                 )}
               </p>
             </div>
@@ -282,11 +282,11 @@ export function WalletCard({
             </Button>
           </div>
           <p className="text-[9px] text-muted-foreground mt-2">
-            Deposit and hold minimum 50M $CLAWDBUMP token to your Smart Wallet to start using the bot
+            Deposit and hold minimum 50K $BUMP token to your Smart Wallet to start using the bot
           </p>
 
           <div className="mt-3 space-y-1">
-            <p className="text-[9px] text-muted-foreground">Withdraw $CLAWDBUMP to your own address</p>
+            <p className="text-[9px] text-muted-foreground">Withdraw $BUMP to your own address</p>
             <div className="flex items-center gap-2">
               <input
                 type="text"

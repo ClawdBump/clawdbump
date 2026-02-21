@@ -118,11 +118,11 @@ const {
       const amountUsdValue = parseFloat(buyAmountUsd)
       if (isNaN(amountUsdValue) || amountUsdValue <= 0) return toast.error("Invalid amount")
 
-      // Require minimum 50M $CLAWDBUMP in Privy Smart Wallet before starting the bot
+      // Require minimum 50K $BUMP in Privy Smart Wallet before starting the bot
       const minRequiredTokens = BigInt(50_000) * 10n ** BigInt(BUMP_DECIMALS)
       if (!clawdbumpBalance || clawdbumpBalance.balance < minRequiredTokens) {
-        return toast.error("Insufficient $CLAWDBUMP balance", {
-          description: "You must hold at least 50,000,000 $CLAWDBUMP in your Privy Smart Wallet to start bumping.",
+        return toast.error("Insufficient $BUMP balance", {
+          description: "You must hold at least 50,000 $BUMP in your Privy Smart Wallet to start bumping.",
         })
       }
 

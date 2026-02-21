@@ -1,18 +1,19 @@
 // Token and Contract Addresses on Base Mainnet
-// $CLAWDBUMP token address:
-// - Prefer environment variable CLAWDBUMP_TOKEN_ADDRESS (as requested)
+// $BUMP token address:
+// - Prefer environment variable BUMP_TOKEN_ADDRESS or CLAWDBUMP_TOKEN_ADDRESS
 // - Also supports NEXT_PUBLIC_CLAWDBUMP_TOKEN_ADDRESS for client-side usage
-// - Falls back to the default hardcoded address if env is not set
-// - Default now set to the main $CLAWDBUMP token: 0x6790fc10a8a2ee1990880577bdfc2c514ce1fb07
-const DEFAULT_CLAWDBUMP_TOKEN_ADDRESS = "0x6b19b32ce728028d913c24c42f47867c32eabba3" as const
+// - Default: 0xBc9cf1b9e5e4c7F9C2e90C3C726F03e941618173
+const DEFAULT_BUMP_TOKEN_ADDRESS = "0xBc9cf1b9e5e4c7F9C2e90C3C726F03e941618173" as const
 
-export const CLAWDBUMP_TOKEN_ADDRESS =
-  (process.env.NEXT_PUBLIC_CLAWDBUMP_TOKEN_ADDRESS ||
+export const BUMP_TOKEN_ADDRESS =
+  (process.env.NEXT_PUBLIC_BUMP_TOKEN_ADDRESS ||
+    process.env.BUMP_TOKEN_ADDRESS ||
+    process.env.NEXT_PUBLIC_CLAWDBUMP_TOKEN_ADDRESS ||
     process.env.CLAWDBUMP_TOKEN_ADDRESS ||
-    DEFAULT_CLAWDBUMP_TOKEN_ADDRESS) as `0x${string}`
+    DEFAULT_BUMP_TOKEN_ADDRESS) as `0x${string}`
 
-// Backwards-compatible alias used across the app
-export const BUMP_TOKEN_ADDRESS = CLAWDBUMP_TOKEN_ADDRESS
+// Backwards-compatible alias
+export const CLAWDBUMP_TOKEN_ADDRESS = BUMP_TOKEN_ADDRESS
 export const TREASURY_ADDRESS = "0x43d9a5cb3c0299e3de882e10036ee9de0497f234" as const
 export const BASE_WETH_ADDRESS = "0x4200000000000000000000000000000000000006" as const
 
