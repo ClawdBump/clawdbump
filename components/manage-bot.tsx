@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { isAddress } from "viem"
+import { isAddress, formatEther } from "viem"
 import { toast } from "sonner"
 import { Send, Loader2, RefreshCw, Wallet, ArrowRightLeft } from "lucide-react"
 import { useTotalBlockchainBalance } from "@/hooks/use-blockchain-balance"
@@ -40,7 +40,7 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
     () => botWallets?.map((w) => w.smartWalletAddress) ?? [],
     [botWallets]
   )
-  const { totalBalance, botBalances, isLoading: isLoadingUserEth, refetch: refetchBalances } = useTotalBlockchainBalance({
+  const { botBalances, refetch: refetchBalances } = useTotalBlockchainBalance({
     mainWalletAddress: userAddress,
     botWalletAddresses,
     enabled: !!userAddress,
@@ -75,28 +75,23 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
 
   const tokensWithNativeEth = useMemo(() => {
     const nativeEthWalletBalances =
-      botWalletAddresses && botBalances
-        ? botWalletAddresses
-            .map((addr, i) => ({
-              address: addr,
-              balance: (botBalances[i]?.nativeEth ?? 0n).toString(),
-            }))
-            .filter((wb) => BigInt(wb.balance) > 0n)
-        : []
+      botWalletAddresses && botBalances && botWalletAddresses.length === botBalances.length
+        ? botWalletAddresses.map((addr, i) => ({
+            address: addr,
+            balance: (botBalances[i]?.nativeEth ?? 0n).toString(),
+          }))
+        : botWalletAddresses?.map((addr) => ({ address: addr, balance: "0" })) ?? []
     const nativeEthTotalWei = nativeEthWalletBalances.reduce((sum, wb) => sum + BigInt(wb.balance), 0n)
-    const nativeEthToken: TokenInfo | null =
-      nativeEthTotalWei > 0n
-        ? {
-            address: NATIVE_ETH_ADDRESS,
-            symbol: "ETH",
-            name: "Ethereum",
-            decimals: 18,
-            balanceWei: nativeEthTotalWei.toString(),
-            balanceFormatted: (Number(nativeEthTotalWei) / 1e18).toFixed(18),
-            walletBalances: nativeEthWalletBalances,
-          }
-        : null
-    return nativeEthToken ? [nativeEthToken, ...tokens] : tokens
+    const nativeEthToken: TokenInfo = {
+      address: NATIVE_ETH_ADDRESS,
+      symbol: "ETH",
+      name: "Ethereum",
+      decimals: 18,
+      balanceWei: nativeEthTotalWei.toString(),
+      balanceFormatted: formatEther(nativeEthTotalWei),
+      walletBalances: nativeEthWalletBalances,
+    }
+    return [nativeEthToken, ...tokens]
   }, [tokens, botWalletAddresses, botBalances])
 
   const selectedTokenInfo = useMemo(() => {
@@ -209,14 +204,7 @@ export function ManageBot({ userAddress, botWallets }: ManageBotProps) {
 
       <div className="space-y-4">
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label className="text-xs text-muted-foreground">Select Token</Label>
-            {userAddress && (
-              <span className="text-xs text-muted-foreground">
-                Total (main + bots): {isLoadingUserEth ? "..." : totalBalance ? `${parseFloat(totalBalance.nativeEthFormatted).toFixed(6)} ETH` : "—"}
-              </span>
-            )}
-          </div>
+          <Label className="text-xs text-muted-foreground">Select Token</Label>
           <Select value={selectedToken} onValueChange={setSelectedToken} disabled={isLoadingTokens || isSending || isWithdrawingWeth}>
             <SelectTrigger className="w-full font-mono text-xs bg-background/50">
               <SelectValue placeholder={isLoadingTokens ? "Scanning..." : "Select Token"} />
